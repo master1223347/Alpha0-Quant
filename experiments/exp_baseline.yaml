@@ -1,0 +1,45 @@
+name: baseline_mlp
+
+data:
+  raw_root: data/raw
+  max_tickers: 200
+  min_sequence_length: 40
+
+features:
+  momentum_lookback: 3
+  volatility_window: 5
+  relative_volume_window: 5
+  volume_window: 10
+  normalize: true
+
+dataset:
+  window_size: 32
+  stride: 1
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  batch_size: 256
+  num_workers: 0
+
+model:
+  model_name: baseline_mlp
+  hidden_dims: [256, 128]
+  dropout: 0.1
+
+training:
+  epochs: 8
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  scheduler_name: cosine
+  scheduler_step_size: 4
+  scheduler_gamma: 0.5
+  device: auto
+  seed: 42
+  checkpoint_dir: models/checkpoints
+  log_path: models/logs/training_log.json
+  metrics_path: models/logs/metrics.json
+
+backtest:
+  long_threshold: 0.55
+  short_threshold: 0.45
+  periods_per_year: 19656

@@ -1,0 +1,75 @@
+"""Training pipeline entrypoint."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+from src.config.default_config import ExperimentConfig, get_default_config
+from src.dataset.dataloader import create_dataloaders
+from src.models.baseline import BaselineMLP
+from src.pipeline.build_dataset import BuildDatasetArtifacts, build_dataset
+from src.training.train import TrainingArtifacts, train_model
+from src.utils.logger import get_logger
+
+
+LOGGER = get_logger(__name__)
+
+
+@dataclass(slots=True)
+class TrainPipelineArtifacts:
+    training: TrainingArtifacts
+    dataset: BuildDatasetArtifacts
+    model: Any
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "training": self.training.to_dict(),
+            "dataset": self.dataset.to_dict(),
+        }
+
+
+def _build_model(config: ExperimentConfig, *, num_features: int) -> Any:
+    model_name = config.model.model_name.lower()
+    if model_name in {"baseline", "baseline_mlp", "mlp", "encoder", "encoder_mlp"}:
+        return BaselineMLP(
+            window_size=config.dataset.window_size,
+            num_features=num_features,
+            hidden_dims=tuple(config.model.hidden_dims),
+            dropout=float(config.model.dropout),
+        )
+    raise ValueError(f"Unsupported model_name: {config.model.model_name}")
+
+
+def run_training_pipeline(
+    config: ExperimentConfig | None = None,
+    *,
+    exchange: str | None = None,
+    asset_type: str | None = None,
+) -> TrainPipelineArtifacts:
+    """Build dataset, train model, and persist training outputs."""
+    config = config or get_default_config()
+    dataset_artifacts = build_dataset(config, exchange=exchange, asset_type=asset_type)
+
+    train_dataset = dataset_artifacts.datasets.get("train")
+    if train_dataset is None or len(train_dataset) == 0:
+        raise ValueError("Training dataset is empty after preprocessing")
+
+    dataloaders = create_dataloaders(
+        dataset_artifacts.datasets,
+        batch_size=config.dataset.batch_size,
+        num_workers=config.dataset.num_workers,
+        shuffle_train=True,
+    )
+    model = _build_model(config, num_features=len(dataset_artifacts.feature_columns))
+    training_artifacts = train_model(config, dataloaders, model)
+
+    metrics_path = Path(config.training.metrics_path)
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    with metrics_path.open("w", encoding="utf-8") as handle:
+        json.dump(training_artifacts.to_dict(), handle, indent=2)
+    LOGGER.info("Training metrics written to %s", metrics_path)
+
+    return TrainPipelineArtifacts(training=training_artifacts, dataset=dataset_artifacts, model=model)

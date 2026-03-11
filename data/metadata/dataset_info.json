@@ -1,0 +1,30 @@
+{
+  "feature_columns": [
+    "candle_body",
+    "candle_range",
+    "close_position",
+    "day_of_week_cos",
+    "day_of_week_sin",
+    "gap_return",
+    "intrabar_return",
+    "log_return",
+    "lower_wick",
+    "range_expansion",
+    "relative_volume",
+    "relative_volume_long",
+    "rolling_volatility",
+    "session_pos_cos",
+    "session_pos_sin",
+    "short_term_momentum",
+    "upper_wick",
+    "volume_change",
+    "volume_zscore"
+  ],
+  "split_row_counts": {
+    "train": 55,
+    "val": 18,
+    "test": 0
+  },
+  "window_size": 4,
+  "stride": 1
+}

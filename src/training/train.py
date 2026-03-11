@@ -1,0 +1,148 @@
+"""Model training loop."""
+
+from __future__ import annotations
+
+import json
+import math
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+from src.models.losses import build_bce_with_logits_loss, compute_pos_weight
+from src.training.checkpoint import save_checkpoint
+from src.training.scheduler import create_scheduler
+from src.training.validate import ValidationResult, validate_epoch
+from src.utils.seed import set_global_seed
+
+
+@dataclass(slots=True)
+class TrainingArtifacts:
+    best_epoch: int
+    best_score: float
+    best_checkpoint_path: str
+    history: list[dict[str, Any]]
+    final_validation: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _resolve_device(device_name: str) -> Any:
+    import torch
+
+    if device_name == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(device_name)
+
+
+def _score_from_validation(result: ValidationResult) -> float:
+    auc = result.metrics.auc
+    if isinstance(auc, float) and not math.isnan(auc):
+        return auc
+    return result.metrics.accuracy
+
+
+def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> TrainingArtifacts:
+    """Train model using train/val dataloaders and save best checkpoint."""
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError("torch is required for training") from exc
+
+    set_global_seed(int(config.training.seed))
+    device = _resolve_device(str(config.training.device))
+    model.to(device)
+
+    train_loader = dataloaders["train"]
+    val_loader = dataloaders.get("val", train_loader)
+
+    labels = [int(value) for value in train_loader.dataset.y.tolist()]
+    pos_weight = compute_pos_weight(labels)
+    loss_fn = build_bce_with_logits_loss(pos_weight=pos_weight)
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(config.training.learning_rate),
+        weight_decay=float(config.training.weight_decay),
+    )
+    scheduler = create_scheduler(
+        optimizer,
+        scheduler_name=str(config.training.scheduler_name),
+        total_epochs=int(config.training.epochs),
+        step_size=int(config.training.scheduler_step_size),
+        gamma=float(config.training.scheduler_gamma),
+    )
+
+    checkpoint_dir = Path(config.training.checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    best_checkpoint_path = checkpoint_dir / "best_model.pt"
+
+    history: list[dict[str, Any]] = []
+    best_epoch = -1
+    best_score = float("-inf")
+    best_validation: ValidationResult | None = None
+
+    for epoch in range(1, int(config.training.epochs) + 1):
+        model.train()
+        running_loss = 0.0
+        batch_count = 0
+
+        for batch in train_loader:
+            features = batch["X"].to(device)
+            targets = batch["y"].to(device)
+
+            optimizer.zero_grad()
+            logits = model(features)
+            loss = loss_fn(logits, targets)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += float(loss.item())
+            batch_count += 1
+
+        if scheduler is not None:
+            scheduler.step()
+
+        train_loss = running_loss / batch_count if batch_count > 0 else 0.0
+        validation = validate_epoch(model, val_loader, loss_fn, device=device)
+        score = _score_from_validation(validation)
+
+        epoch_record = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_loss": validation.loss,
+            "val_metrics": validation.metrics.to_dict(),
+            "score": score,
+        }
+        history.append(epoch_record)
+
+        if score > best_score:
+            best_score = score
+            best_epoch = epoch
+            best_validation = validation
+            save_checkpoint(
+                path=best_checkpoint_path,
+                model=model,
+                optimizer=optimizer,
+                epoch=epoch,
+                metric_score=score,
+                history=history,
+            )
+
+    log_path = Path(config.training.log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w", encoding="utf-8") as handle:
+        json.dump(history, handle, indent=2)
+
+    if best_validation is None:
+        best_validation = validate_epoch(model, val_loader, loss_fn, device=device)
+        best_score = _score_from_validation(best_validation)
+        best_epoch = int(config.training.epochs)
+
+    return TrainingArtifacts(
+        best_epoch=best_epoch,
+        best_score=best_score,
+        best_checkpoint_path=str(best_checkpoint_path),
+        history=history,
+        final_validation=best_validation.to_dict(),
+    )
