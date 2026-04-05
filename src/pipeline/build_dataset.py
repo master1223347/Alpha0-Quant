@@ -99,6 +99,72 @@ def _flatten_rows(ticker_sequences: dict[str, list[list[dict[str, Any]]]]) -> li
     return [row for sequences in ticker_sequences.values() for sequence in sequences for row in sequence]
 
 
+def _split_timestamp_sets(
+    split_sequences: dict[str, dict[str, list[list[dict[str, Any]]]]],
+) -> dict[str, set[Any]]:
+    timestamp_sets: dict[str, set[Any]] = {}
+    for split_name, ticker_map in split_sequences.items():
+        timestamps: set[Any] = set()
+        for sequences in ticker_map.values():
+            for sequence in sequences:
+                for row in sequence:
+                    timestamp = row.get("timestamp")
+                    if timestamp is not None:
+                        timestamps.add(timestamp)
+        timestamp_sets[split_name] = timestamps
+    return timestamp_sets
+
+
+def _timestamp_overlap_counts(timestamp_sets: dict[str, set[Any]]) -> dict[str, int]:
+    overlaps: dict[str, int] = {}
+    pairs = (("train", "val"), ("train", "test"), ("val", "test"))
+    for left, right in pairs:
+        left_set = timestamp_sets.get(left, set())
+        right_set = timestamp_sets.get(right, set())
+        overlaps[f"{left}_{right}"] = len(left_set.intersection(right_set))
+    return overlaps
+
+
+def _validate_split_integrity(
+    *,
+    split_mode: str,
+    split_sequences: dict[str, dict[str, list[list[dict[str, Any]]]]],
+    feature_columns: list[str],
+) -> dict[str, int]:
+    timestamp_sets = _split_timestamp_sets(split_sequences)
+    overlap_counts = _timestamp_overlap_counts(timestamp_sets)
+    has_overlap = any(count > 0 for count in overlap_counts.values())
+    has_cross_sectional_features = any(column.startswith("cs_") for column in feature_columns)
+
+    if split_mode == "global_time":
+        if has_overlap:
+            raise ValueError(
+                f"Leakage risk: global_time split produced overlapping timestamps across splits: {overlap_counts}"
+            )
+
+        train_timestamps = timestamp_sets.get("train", set())
+        val_timestamps = timestamp_sets.get("val", set())
+        test_timestamps = timestamp_sets.get("test", set())
+        if train_timestamps and val_timestamps and max(train_timestamps) > min(val_timestamps):
+            raise ValueError("Leakage risk: train timestamps extend past validation start under global_time split")
+        if val_timestamps and test_timestamps and max(val_timestamps) > min(test_timestamps):
+            raise ValueError("Leakage risk: validation timestamps extend past test start under global_time split")
+        return overlap_counts
+
+    if has_overlap and has_cross_sectional_features:
+        raise ValueError(
+            "Leakage risk: per_ticker split with cross-sectional features causes same-timestamp contamination "
+            f"across splits ({overlap_counts}). Use dataset.split_mode='global_time'."
+        )
+    if has_overlap:
+        LOGGER.warning(
+            "Potential temporal leakage: %s split has overlapping timestamps across splits: %s",
+            split_mode,
+            overlap_counts,
+        )
+    return overlap_counts
+
+
 def _write_table(path: str | Path, rows: list[dict[str, Any]]) -> Path:
     output_path = ensure_parent(path)
     try:
@@ -147,6 +213,11 @@ def build_dataset(
         val_ratio=config.dataset.val_ratio,
         test_ratio=config.dataset.test_ratio,
         split_mode=split_mode,
+    )
+    overlap_counts = _validate_split_integrity(
+        split_mode=split_mode,
+        split_sequences=split_sequences,
+        feature_columns=feature_artifacts.feature_columns,
     )
 
     if config.features.normalize:
@@ -228,6 +299,7 @@ def build_dataset(
                 "return_target": return_target_key,
                 "target_columns": list(TARGET_COLUMNS),
                 "context_size": panel_context_size if dataset_type == "panel" else None,
+                "timestamp_overlap_counts": overlap_counts,
             },
             handle,
             indent=2,

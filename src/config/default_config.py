@@ -51,7 +51,7 @@ class DatasetConfig:
     window_size: int = 32
     stride: int = 1
     label_horizon: int = 1
-    split_mode: str = "per_ticker"
+    split_mode: str = "global_time"
     dataset_type: str = "auto"
     panel_context_size: int | None = None
     train_ratio: float = 0.70
@@ -88,7 +88,7 @@ class BacktestConfig:
     long_threshold: float = 0.55
     short_threshold: float = 0.45
     periods_per_year: int = 252 * 78
-    split_mode: str = "per_ticker"
+    split_mode: str = "global_time"
     include_costs: bool = True
     cost_bps_per_trade: float = 0.0
     slippage_bps: float = 0.0
