@@ -21,10 +21,10 @@
     "volume_zscore"
   ],
   "split_row_counts": {
-    "train": 55,
-    "val": 18,
+    "train": 225,
+    "val": 54,
     "test": 0
   },
-  "window_size": 4,
+  "window_size": 8,
   "stride": 1
 }

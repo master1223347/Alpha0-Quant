@@ -114,6 +114,13 @@ def build_dataset(
     """Build normalized train/val/test window datasets."""
     config = config or get_default_config()
     feature_artifacts: FeatureBuildArtifacts = build_feature_store(config, exchange=exchange, asset_type=asset_type)
+    if not feature_artifacts.feature_columns:
+        raise ValueError(
+            "No usable feature rows were built. Try increasing data coverage and/or relaxing sequence constraints "
+            "(for example: set data.max_tickers higher or null, lower data.min_sequence_length, and lower "
+            "dataset.window_size)."
+        )
+
     labeled_sequences = _label_ticker_sequences(feature_artifacts.ticker_sequences)
 
     split_sequences = split_ticker_sequences(

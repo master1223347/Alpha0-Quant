@@ -17,7 +17,7 @@ class OhlcvRow(TypedDict):
     high: float
     low: float
     close: float
-    volume: int
+    volume: float
 
 
 RAW_TO_OUTPUT_COLUMNS = {
@@ -25,7 +25,7 @@ RAW_TO_OUTPUT_COLUMNS = {
     "<HIGH>": ("high", float),
     "<LOW>": ("low", float),
     "<CLOSE>": ("close", float),
-    "<VOL>": ("volume", int),
+    "<VOL>": ("volume", float),
 }
 
 REQUIRED_RAW_COLUMNS = {"<DATE>", "<TIME>", *RAW_TO_OUTPUT_COLUMNS.keys()}
@@ -59,7 +59,7 @@ def load_ticker_file(path: str | Path) -> list[OhlcvRow]:
                 "high": float(raw_row["<HIGH>"]),
                 "low": float(raw_row["<LOW>"]),
                 "close": float(raw_row["<CLOSE>"]),
-                "volume": int(raw_row["<VOL>"]),
+                "volume": float(raw_row["<VOL>"]),
             }
             rows.append(row)
 

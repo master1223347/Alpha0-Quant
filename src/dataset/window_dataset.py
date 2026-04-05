@@ -156,6 +156,4 @@ class WindowTensorDataset:
             "y": self.y[index],
             "close": self.close[index],
             "next_close": self.next_close[index],
-            "timestamp": self.timestamps[index],
-            "ticker": self.tickers[index],
         }

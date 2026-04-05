@@ -1,0 +1,25 @@
+{
+  "model_name": "baseline_mlp",
+  "split": "test",
+  "generated_at": "2026-04-05 03:08:40",
+  "metrics": {
+    "accuracy": 0.5833333333333334,
+    "precision": 0.5454545454545454,
+    "recall": 1.0,
+    "auc": 0.75,
+    "tp": 6,
+    "fp": 5,
+    "tn": 1,
+    "fn": 0
+  },
+  "backtest": {
+    "pnl": 0.0,
+    "sharpe": 0.0,
+    "max_drawdown": 0.0,
+    "hit_rate": 0.0,
+    "trade_count": 0,
+    "long_count": 0,
+    "short_count": 0,
+    "flat_count": 12
+  }
+}
