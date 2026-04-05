@@ -14,6 +14,8 @@ from src.data.discover import TickerFile, discover_tickers
 from src.data.loader import OhlcvRow, load_ticker_file
 from src.data.validator import validate_feature_rows, validate_ohlcv_rows
 from src.features.base_features import build_base_features
+from src.features.cross_sectional import apply_cross_sectional_features
+from src.features.cross_sectional import cross_sectional_feature_columns
 from src.features.market_features import build_market_features
 from src.features.time_features import build_time_features
 from src.features.volume_features import build_volume_features
@@ -98,9 +100,14 @@ def build_features_for_ticker(ticker_file: TickerFile, config: ExperimentConfig)
     validate_ohlcv_rows(cleaned_rows, stage=f"{ticker_file.ticker}_cleaned", raise_on_error=True)
 
     aligned_sequences = align_ticker_rows(cleaned_rows)
+    min_sequence_length = (
+        config.universe.min_sequence_length
+        if config.universe.min_sequence_length is not None
+        else config.data.min_sequence_length
+    )
     ticker_sequences: list[list[dict[str, Any]]] = []
     for sequence in aligned_sequences:
-        if len(sequence) < config.data.min_sequence_length:
+        if len(sequence) < min_sequence_length:
             continue
         feature_sequence = _merge_feature_rows(sequence, config)
         if not feature_sequence:
@@ -150,12 +157,20 @@ def build_feature_store(
     """Discover tickers and build feature sequences for each ticker."""
     config = config or get_default_config()
     raw_root = guess_raw_root(config)
-    ticker_files = discover_tickers(raw_root=raw_root, exchange=exchange, asset_type=asset_type)
+    resolved_exchange = exchange if exchange is not None else config.universe.exchange
+    resolved_asset_type = asset_type if asset_type is not None else config.universe.asset_type
+    ticker_files = discover_tickers(raw_root=raw_root, exchange=resolved_exchange, asset_type=resolved_asset_type)
 
-    if config.data.max_tickers is not None:
-        ticker_files = ticker_files[: int(config.data.max_tickers)]
+    if config.universe.tickers:
+        allowed = {ticker.upper() for ticker in config.universe.tickers}
+        ticker_files = [ticker_file for ticker_file in ticker_files if ticker_file.ticker.upper() in allowed]
+
+    max_tickers = config.universe.max_tickers if config.universe.max_tickers is not None else config.data.max_tickers
+    if max_tickers is not None:
+        ticker_files = ticker_files[: int(max_tickers)]
 
     ticker_sequences: dict[str, list[list[dict[str, Any]]]] = {}
+    base_feature_columns: list[str] = []
     feature_columns: list[str] = []
     total_sequences = 0
     total_rows = 0
@@ -171,10 +186,24 @@ def build_feature_store(
         ticker_sequences[ticker_file.ticker] = sequences
         total_sequences += len(sequences)
         total_rows += sum(len(sequence) for sequence in sequences)
-        if not feature_columns:
-            feature_columns = _feature_columns_from_sequence(sequences[0])
+        if not base_feature_columns:
+            base_feature_columns = _feature_columns_from_sequence(sequences[0])
 
     flattened_rows = [row for sequences in ticker_sequences.values() for sequence in sequences for row in sequence]
+    if flattened_rows and base_feature_columns:
+        apply_cross_sectional_features(flattened_rows, feature_columns=base_feature_columns)
+        feature_columns = base_feature_columns + cross_sectional_feature_columns(base_feature_columns)
+        for ticker, sequences in ticker_sequences.items():
+            for index, sequence in enumerate(sequences):
+                validate_feature_rows(
+                    sequence,
+                    feature_columns=feature_columns,
+                    stage=f"{ticker}_cross_sectional_{index}",
+                    raise_on_error=True,
+                )
+    elif flattened_rows:
+        feature_columns = _feature_columns_from_sequence(flattened_rows[:1])
+
     output_path = _write_feature_rows(config.data.features_path, flattened_rows)
     LOGGER.info("Feature rows written to %s", output_path)
 

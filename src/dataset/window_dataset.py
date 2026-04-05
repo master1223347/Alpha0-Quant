@@ -22,6 +22,10 @@ class WindowDatasetArtifacts:
     timestamps: list[datetime]
     tickers: list[str]
     feature_columns: list[str]
+    target_return: "np.ndarray | None" = None
+    direction_label: "np.ndarray | None" = None
+    threshold_label: "np.ndarray | None" = None
+    rank_target: "np.ndarray | None" = None
 
     def __len__(self) -> int:
         return int(self.y.shape[0])
@@ -55,6 +59,10 @@ def build_labeled_windows(
     stride: int = 1,
     feature_columns: list[str] | None = None,
     label_key: str = "label",
+    return_key: str = "next_log_return",
+    direction_key: str = "label",
+    threshold_key: str = "threshold_label",
+    rank_key: str = "cross_sectional_rank",
 ) -> WindowDatasetArtifacts:
     """Build sliding windows and next-candle binary labels from feature sequences."""
     if window_size <= 0:
@@ -78,9 +86,13 @@ def build_labeled_windows(
         raise ValueError("No feature columns available for window construction")
 
     X_values: list[list[list[float]]] = []
-    y_values: list[int] = []
+    y_values: list[float] = []
     close_values: list[float] = []
     next_close_values: list[float] = []
+    target_return_values: list[float] = []
+    direction_values: list[float] = []
+    threshold_values: list[float] = []
+    rank_values: list[float] = []
     timestamps: list[datetime] = []
     tickers: list[str] = []
 
@@ -98,21 +110,34 @@ def build_labeled_windows(
                 window_features = [[float(row[column]) for column in columns] for row in window_rows]
 
                 X_values.append(window_features)
-                y_values.append(int(target_row[label_key]))
+                y_values.append(float(target_row[label_key]))
                 close_values.append(float(target_row["close"]))
                 next_close_values.append(float(target_row["next_close"]))
+                fallback_return = (float(target_row["next_close"]) - float(target_row["close"])) / max(
+                    float(target_row["close"]),
+                    1e-8,
+                )
+                target_return_values.append(float(target_row.get(return_key, fallback_return)))
+                direction_values.append(float(target_row.get(direction_key, target_row.get("label", 0.0))))
+                threshold_values.append(float(target_row.get(threshold_key, 1.0)))
+                rank_values.append(float(target_row.get(rank_key, 0.5)))
                 timestamps.append(target_row["timestamp"])
                 tickers.append(ticker)
 
     if not X_values:
         empty_x = np.zeros((0, window_size, len(columns)), dtype=np.float32)
-        empty_y = np.zeros((0,), dtype=np.int64)
+        empty_y = np.zeros((0,), dtype=np.float32)
         empty_close = np.zeros((0,), dtype=np.float32)
+        empty_aux = np.zeros((0,), dtype=np.float32)
         return WindowDatasetArtifacts(
             X=empty_x,
             y=empty_y,
             close=empty_close,
             next_close=empty_close.copy(),
+            target_return=empty_aux,
+            direction_label=empty_aux.copy(),
+            threshold_label=empty_aux.copy(),
+            rank_target=empty_aux.copy(),
             timestamps=[],
             tickers=[],
             feature_columns=columns,
@@ -120,9 +145,13 @@ def build_labeled_windows(
 
     return WindowDatasetArtifacts(
         X=np.asarray(X_values, dtype=np.float32),
-        y=np.asarray(y_values, dtype=np.int64),
+        y=np.asarray(y_values, dtype=np.float32),
         close=np.asarray(close_values, dtype=np.float32),
         next_close=np.asarray(next_close_values, dtype=np.float32),
+        target_return=np.asarray(target_return_values, dtype=np.float32),
+        direction_label=np.asarray(direction_values, dtype=np.float32),
+        threshold_label=np.asarray(threshold_values, dtype=np.int64),
+        rank_target=np.asarray(rank_values, dtype=np.float32),
         timestamps=timestamps,
         tickers=tickers,
         feature_columns=columns,
@@ -143,6 +172,16 @@ class WindowTensorDataset:
         self.y = torch.tensor(artifacts.y, dtype=torch.float32)
         self.close = torch.tensor(artifacts.close, dtype=torch.float32)
         self.next_close = torch.tensor(artifacts.next_close, dtype=torch.float32)
+        self.target_return = (
+            torch.tensor(artifacts.target_return, dtype=torch.float32) if artifacts.target_return is not None else None
+        )
+        self.direction_label = (
+            torch.tensor(artifacts.direction_label, dtype=torch.float32) if artifacts.direction_label is not None else None
+        )
+        self.threshold_label = (
+            torch.tensor(artifacts.threshold_label, dtype=torch.long) if artifacts.threshold_label is not None else None
+        )
+        self.rank_target = torch.tensor(artifacts.rank_target, dtype=torch.float32) if artifacts.rank_target is not None else None
         self.timestamps = artifacts.timestamps
         self.tickers = artifacts.tickers
         self.feature_columns = artifacts.feature_columns
@@ -151,9 +190,18 @@ class WindowTensorDataset:
         return int(self.y.shape[0])
 
     def __getitem__(self, index: int) -> dict[str, Any]:
-        return {
+        sample = {
             "X": self.X[index],
             "y": self.y[index],
             "close": self.close[index],
             "next_close": self.next_close[index],
         }
+        if self.target_return is not None:
+            sample["target_return"] = self.target_return[index]
+        if self.direction_label is not None:
+            sample["direction_label"] = self.direction_label[index]
+        if self.threshold_label is not None:
+            sample["threshold_label"] = self.threshold_label[index]
+        if self.rank_target is not None:
+            sample["rank_target"] = self.rank_target[index]
+        return sample

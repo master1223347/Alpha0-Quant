@@ -20,6 +20,24 @@ class DataConfig:
 
 
 @dataclass(slots=True)
+class UniverseConfig:
+    exchange: str | None = None
+    asset_type: str | None = None
+    tickers: tuple[str, ...] | None = None
+    max_tickers: int | None = None
+    min_sequence_length: int | None = None
+
+
+@dataclass(slots=True)
+class TargetConfig:
+    horizon: int | None = None
+    threshold: float = 0.001
+    volatility_window: int = 20
+    zscore_window: int = 20
+    primary_target: str = "label"
+
+
+@dataclass(slots=True)
 class FeatureConfig:
     momentum_lookback: int = 3
     volatility_window: int = 5
@@ -33,6 +51,9 @@ class DatasetConfig:
     window_size: int = 32
     stride: int = 1
     label_horizon: int = 1
+    split_mode: str = "per_ticker"
+    dataset_type: str = "auto"
+    panel_context_size: int | None = None
     train_ratio: float = 0.70
     val_ratio: float = 0.15
     test_ratio: float = 0.15
@@ -67,12 +88,18 @@ class BacktestConfig:
     long_threshold: float = 0.55
     short_threshold: float = 0.45
     periods_per_year: int = 252 * 78
+    split_mode: str = "per_ticker"
+    include_costs: bool = True
+    cost_bps_per_trade: float = 0.0
+    slippage_bps: float = 0.0
 
 
 @dataclass(slots=True)
 class ExperimentConfig:
     name: str = "baseline"
     data: DataConfig = field(default_factory=DataConfig)
+    universe: UniverseConfig = field(default_factory=UniverseConfig)
+    targets: TargetConfig = field(default_factory=TargetConfig)
     features: FeatureConfig = field(default_factory=FeatureConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     model: ModelConfig = field(default_factory=ModelConfig)

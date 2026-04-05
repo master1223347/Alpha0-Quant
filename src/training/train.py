@@ -8,7 +8,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from src.models.losses import build_bce_with_logits_loss, compute_pos_weight
+from src.models.losses import compute_pos_weight
+from src.models.losses_prob import build_model_loss
 from src.training.checkpoint import save_checkpoint
 from src.training.scheduler import create_scheduler
 from src.training.validate import ValidationResult, validate_epoch
@@ -42,6 +43,16 @@ def _score_from_validation(result: ValidationResult) -> float:
     return result.metrics.accuracy
 
 
+def _is_binary_labels(values: list[float], *, tol: float = 1e-6) -> bool:
+    if not values:
+        return False
+    for value in values:
+        if abs(value - 0.0) <= tol or abs(value - 1.0) <= tol:
+            continue
+        return False
+    return True
+
+
 def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> TrainingArtifacts:
     """Train model using train/val dataloaders and save best checkpoint."""
     try:
@@ -56,9 +67,12 @@ def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> Trainin
     train_loader = dataloaders["train"]
     val_loader = dataloaders.get("val", train_loader)
 
-    labels = [int(value) for value in train_loader.dataset.y.tolist()]
-    pos_weight = compute_pos_weight(labels)
-    loss_fn = build_bce_with_logits_loss(pos_weight=pos_weight)
+    raw_labels = [float(value) for value in train_loader.dataset.y.tolist()]
+    pos_weight = None
+    if _is_binary_labels(raw_labels):
+        labels = [int(round(value)) for value in raw_labels]
+        pos_weight = compute_pos_weight(labels)
+    loss_fn = build_model_loss(model, pos_weight=pos_weight).to(device)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -92,8 +106,8 @@ def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> Trainin
             targets = batch["y"].to(device)
 
             optimizer.zero_grad()
-            logits = model(features)
-            loss = loss_fn(logits, targets)
+            outputs = model(features)
+            loss = loss_fn(outputs, targets, batch=batch)
             loss.backward()
             optimizer.step()
 

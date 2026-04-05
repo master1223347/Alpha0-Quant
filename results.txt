@@ -1,0 +1,54 @@
+Alpha0 Quant - Model Run Results
+
+Run command:
+.venv/bin/python -m src.pipeline.run_experiment --config experiments/exp_minn_panel.yaml
+
+Config:
+- name: minn_panel_transformer
+- model: panel_transformer
+- dataset_type: panel
+- split_mode: global_time
+- checkpoint: models/checkpoints/best_model.pt
+
+Training (models/logs/metrics.json):
+- best_epoch: 1
+- best_score (selection metric): 0.5091478093403948
+- final_validation.loss: 0.9642406105995178
+- final_validation.accuracy: 0.4728682170542636
+- final_validation.precision: 0.49473684210526314
+- final_validation.recall: 0.7014925373134329
+- final_validation.auc: 0.5091478093403948
+- final_validation.brier_score: 0.25022381134671734
+- final_validation.ece: 0.04063126591538369
+- final_validation.return_mae: 0.18419341152942204
+- final_validation.return_rmse: 0.19819195623616304
+- final_validation.return_nll: -0.0664049862298946
+
+Evaluation Report (models/logs/evaluation_report.json):
+- split: test
+- accuracy: 0.5378151260504201
+- precision: 0.576271186440678
+- recall: 0.53125
+- auc: 0.5360795454545455
+- brier_score: 0.24946343354151543
+- ece: 0.03916753680418905
+- return_mae: 0.2350588203784118
+- return_rmse: 0.24587705881964989
+- return_nll: 0.034500940770785485
+- avg_predicted_return: 0.2350894009240535
+- avg_actual_return: 3.058054564172082e-05
+
+Backtest (models/logs/backtest.json):
+- pnl: 0.0
+- gross_pnl: 0.0
+- transaction_cost_pnl: 0.0
+- slippage_pnl: 0.0
+- sharpe: 0.0
+- max_drawdown: 0.0
+- hit_rate: 0.0
+- trade_count: 0
+- long_count: 0
+- short_count: 0
+- flat_count: 119
+- cost_bps_per_trade: 1.0
+- slippage_bps: 0.5

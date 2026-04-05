@@ -10,6 +10,9 @@ from typing import Any
 from src.config.default_config import ExperimentConfig, get_default_config
 from src.dataset.dataloader import create_dataloaders
 from src.models.baseline import BaselineMLP
+from src.models.gnn import gnn_panel
+from src.models.panel_transformer import panel_transformer
+from src.models.tcn import tcn_encoder
 from src.pipeline.build_dataset import BuildDatasetArtifacts, build_dataset
 from src.training.train import TrainingArtifacts, train_model
 from src.utils.logger import get_logger
@@ -38,6 +41,24 @@ def _build_model(config: ExperimentConfig, *, num_features: int) -> Any:
             window_size=config.dataset.window_size,
             num_features=num_features,
             hidden_dims=tuple(config.model.hidden_dims),
+            dropout=float(config.model.dropout),
+        )
+    if model_name in {"tcn", "tcn_encoder"}:
+        return tcn_encoder(
+            window_size=config.dataset.window_size,
+            num_features=num_features,
+            dropout=float(config.model.dropout),
+        )
+    if model_name in {"panel_transformer", "transformer", "minn_transformer"}:
+        return panel_transformer(
+            window_size=config.dataset.window_size,
+            num_features=num_features,
+            dropout=float(config.model.dropout),
+        )
+    if model_name in {"gnn_panel", "gnn"}:
+        return gnn_panel(
+            window_size=config.dataset.window_size,
+            num_features=num_features,
             dropout=float(config.model.dropout),
         )
     raise ValueError(f"Unsupported model_name: {config.model.model_name}")

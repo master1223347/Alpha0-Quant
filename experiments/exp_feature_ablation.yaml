@@ -3,6 +3,7 @@ name: feature_ablation
 data:
   raw_root: data/raw
   max_tickers: 150
+  min_sequence_length: 19
 
 features:
   momentum_lookback: 2
@@ -12,7 +13,7 @@ features:
   normalize: false
 
 dataset:
-  window_size: 32
+  window_size: 8
   stride: 1
   batch_size: 256
 

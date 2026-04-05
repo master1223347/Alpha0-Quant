@@ -3,12 +3,13 @@ name: encoder_track
 data:
   raw_root: data/raw
   max_tickers: 200
+  min_sequence_length: 19
 
 features:
   normalize: true
 
 dataset:
-  window_size: 64
+  window_size: 8
   stride: 1
   batch_size: 192
 

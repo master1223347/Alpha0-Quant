@@ -3,7 +3,7 @@ name: baseline_mlp
 data:
   raw_root: data/raw
   max_tickers: 200
-  min_sequence_length: 40
+  min_sequence_length: 19
 
 features:
   momentum_lookback: 3
@@ -13,7 +13,7 @@ features:
   normalize: true
 
 dataset:
-  window_size: 32
+  window_size: 8
   stride: 1
   train_ratio: 0.70
   val_ratio: 0.15

@@ -47,15 +47,29 @@ def evaluate_model(
     y_prob: list[float],
     close: list[float],
     next_close: list[float],
+    y_return: list[float] | None = None,
+    mean_return: list[float] | None = None,
+    log_scale: list[float] | None = None,
     model_name: str,
     split: str = "test",
     threshold: float = 0.5,
     long_threshold: float = 0.55,
     short_threshold: float = 0.45,
     periods_per_year: int = 252 * 78,
+    cost_bps_per_trade: float = 0.0,
+    slippage_bps: float = 0.0,
+    distribution: str | None = None,
 ) -> EvaluationReport:
     """Compute classification metrics + backtest and return full report."""
-    metrics = compute_classification_metrics(y_true, y_prob, threshold=threshold)
+    metrics = compute_classification_metrics(
+        y_true,
+        y_prob,
+        threshold=threshold,
+        y_return=y_return,
+        mean_return=mean_return,
+        log_scale=log_scale,
+        distribution=distribution,
+    )
     backtest = run_backtest(
         probabilities=y_prob,
         close=close,
@@ -63,6 +77,8 @@ def evaluate_model(
         long_threshold=long_threshold,
         short_threshold=short_threshold,
         periods_per_year=periods_per_year,
+        cost_bps_per_trade=cost_bps_per_trade,
+        slippage_bps=slippage_bps,
     )
     return build_evaluation_report(model_name=model_name, split=split, metrics=metrics, backtest=backtest)
 

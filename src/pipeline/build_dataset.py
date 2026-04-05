@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from src.config.default_config import ExperimentConfig, get_default_config
+from src.dataset.panel_dataset import PanelDatasetArtifacts, build_panel_dataset
 from src.dataset.sampler import split_ticker_sequences
 from src.dataset.window_dataset import WindowDatasetArtifacts, build_labeled_windows
 from src.features.normalize import FeatureNormalizer, fit_feature_normalizer, transform_feature_rows
 from src.pipeline.build_features import FeatureBuildArtifacts, build_feature_store
+from src.targets.labeling import TARGET_COLUMNS, assign_cross_sectional_rank, label_ticker_sequences
 from src.utils.logger import get_logger
 from src.utils.paths import ensure_parent
 
@@ -21,7 +23,7 @@ LOGGER = get_logger(__name__)
 
 @dataclass(slots=True)
 class BuildDatasetArtifacts:
-    datasets: dict[str, WindowDatasetArtifacts]
+    datasets: dict[str, WindowDatasetArtifacts | PanelDatasetArtifacts]
     feature_columns: list[str]
     normalizer: FeatureNormalizer | None
     split_row_counts: dict[str, int]
@@ -36,36 +38,6 @@ class BuildDatasetArtifacts:
             for split, artifacts in self.datasets.items()
         }
         return serializable
-
-
-def _label_sequence(sequence: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Attach next-close binary labels to each row except the terminal candle."""
-    labeled: list[dict[str, Any]] = []
-    for index in range(len(sequence) - 1):
-        current = dict(sequence[index])
-        next_close = float(sequence[index + 1]["close"])
-        current_close = float(current["close"])
-        current["next_close"] = next_close
-        current["label"] = 1 if next_close > current_close else 0
-        labeled.append(current)
-    return labeled
-
-
-def _label_ticker_sequences(ticker_sequences: dict[str, list[list[dict[str, Any]]]]) -> dict[str, list[list[dict[str, Any]]]]:
-    labeled: dict[str, list[list[dict[str, Any]]]] = {}
-    for ticker, sequences in ticker_sequences.items():
-        labeled_sequences = []
-        for sequence in sequences:
-            labeled_sequence = _label_sequence(sequence)
-            if labeled_sequence:
-                labeled_sequences.append(labeled_sequence)
-        if labeled_sequences:
-            labeled[ticker] = labeled_sequences
-    return labeled
-
-
-def _flatten_rows(ticker_sequences: dict[str, list[list[dict[str, Any]]]]) -> list[dict[str, Any]]:
-    return [row for sequences in ticker_sequences.values() for sequence in sequences for row in sequence]
 
 
 def _normalize_split_sequences(
@@ -88,6 +60,43 @@ def _normalize_split_sequences(
             normalized_tickers[ticker] = normalized_sequences
         normalized[split_name] = normalized_tickers
     return normalized, normalizer
+
+
+def _resolve_dataset_type(config: ExperimentConfig) -> str:
+    configured = config.dataset.dataset_type.lower().strip()
+    if configured in {"window", "panel"}:
+        return configured
+    if configured not in {"auto", ""}:
+        raise ValueError(f"Unsupported dataset_type: {config.dataset.dataset_type}")
+
+    model_name = config.model.model_name.lower()
+    if any(marker in model_name for marker in ("panel", "cross_sectional", "cross-sectional")):
+        return "panel"
+    return "window"
+
+
+def _resolve_label_horizon(config: ExperimentConfig) -> int:
+    return int(config.targets.horizon if config.targets.horizon is not None else config.dataset.label_horizon)
+
+
+def _resolve_panel_context_size(config: ExperimentConfig) -> int:
+    context_size = config.dataset.panel_context_size
+    if context_size is None:
+        context_size = config.dataset.window_size
+    if context_size <= 0:
+        raise ValueError("panel_context_size/window_size must be > 0")
+    return int(context_size)
+
+
+def _resolve_return_target_key(config: ExperimentConfig) -> str:
+    preferred = str(config.targets.primary_target).strip()
+    if preferred in {"next_log_return", "vol_target", "z_return", "cross_sectional_rank"}:
+        return preferred
+    return "next_log_return"
+
+
+def _flatten_rows(ticker_sequences: dict[str, list[list[dict[str, Any]]]]) -> list[dict[str, Any]]:
+    return [row for sequences in ticker_sequences.values() for sequence in sequences for row in sequence]
 
 
 def _write_table(path: str | Path, rows: list[dict[str, Any]]) -> Path:
@@ -121,13 +130,23 @@ def build_dataset(
             "dataset.window_size)."
         )
 
-    labeled_sequences = _label_ticker_sequences(feature_artifacts.ticker_sequences)
+    target_horizon = _resolve_label_horizon(config)
+    labeled_sequences = label_ticker_sequences(
+        feature_artifacts.ticker_sequences,
+        horizon=target_horizon,
+        threshold=float(config.targets.threshold),
+        volatility_window=int(config.targets.volatility_window),
+        zscore_window=int(config.targets.zscore_window),
+    )
+    assign_cross_sectional_rank(labeled_sequences, target_column="next_log_return")
 
+    split_mode = config.dataset.split_mode.lower().strip()
     split_sequences = split_ticker_sequences(
         labeled_sequences,
         train_ratio=config.dataset.train_ratio,
         val_ratio=config.dataset.val_ratio,
         test_ratio=config.dataset.test_ratio,
+        split_mode=split_mode,
     )
 
     if config.features.normalize:
@@ -135,17 +154,37 @@ def build_dataset(
     else:
         normalizer = None
 
-    datasets: dict[str, WindowDatasetArtifacts] = {}
+    dataset_type = _resolve_dataset_type(config)
+    if dataset_type == "panel":
+        panel_context_size = _resolve_panel_context_size(config)
+        if config.dataset.panel_context_size is not None and config.dataset.window_size != panel_context_size:
+            # Keep downstream model construction aligned with the panel context tensor.
+            config.dataset.window_size = panel_context_size
+    else:
+        panel_context_size = config.dataset.window_size
+
+    return_target_key = _resolve_return_target_key(config)
+    datasets: dict[str, WindowDatasetArtifacts | PanelDatasetArtifacts] = {}
     split_row_counts: dict[str, int] = {}
     for split_name, ticker_sequences in split_sequences.items():
         split_row_counts[split_name] = sum(len(sequence) for sequences in ticker_sequences.values() for sequence in sequences)
-        datasets[split_name] = build_labeled_windows(
-            ticker_sequences,
-            window_size=config.dataset.window_size,
-            stride=config.dataset.stride,
-            feature_columns=feature_artifacts.feature_columns,
-            label_key="label",
-        )
+        if dataset_type == "panel":
+            datasets[split_name] = build_panel_dataset(
+                ticker_sequences,
+                context_size=panel_context_size,
+                feature_columns=feature_artifacts.feature_columns,
+                label_key=config.targets.primary_target,
+                return_key=return_target_key,
+            )
+        else:
+            datasets[split_name] = build_labeled_windows(
+                ticker_sequences,
+                window_size=config.dataset.window_size,
+                stride=config.dataset.stride,
+                feature_columns=feature_artifacts.feature_columns,
+                label_key=config.targets.primary_target,
+                return_key=return_target_key,
+            )
 
     all_rows = []
     label_rows = []
@@ -156,16 +195,18 @@ def build_dataset(
                     record = dict(row)
                     record["split"] = split_name
                     all_rows.append(record)
-                    label_rows.append(
-                        {
-                            "timestamp": row["timestamp"],
-                            "ticker": ticker,
-                            "close": row["close"],
-                            "next_close": row["next_close"],
-                            "label": row["label"],
-                            "split": split_name,
-                        }
-                    )
+                    label_record = {
+                        "timestamp": row["timestamp"],
+                        "ticker": ticker,
+                        "close": row["close"],
+                        "next_close": row["next_close"],
+                        "split": split_name,
+                    }
+                    for column in TARGET_COLUMNS:
+                        if column not in row:
+                            raise ValueError(f"Missing target column {column!r} when building label rows")
+                        label_record[column] = row[column]
+                    label_rows.append(label_record)
 
     dataset_output = _write_table(config.data.dataset_path, all_rows)
     labels_output = _write_table(config.data.labels_path, label_rows)
@@ -181,6 +222,12 @@ def build_dataset(
                 "split_row_counts": split_row_counts,
                 "window_size": config.dataset.window_size,
                 "stride": config.dataset.stride,
+                "dataset_type": dataset_type,
+                "split_mode": split_mode,
+                "primary_target": config.targets.primary_target,
+                "return_target": return_target_key,
+                "target_columns": list(TARGET_COLUMNS),
+                "context_size": panel_context_size if dataset_type == "panel" else None,
             },
             handle,
             indent=2,

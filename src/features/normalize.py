@@ -6,7 +6,21 @@ from dataclasses import dataclass
 from typing import Any
 
 
-RESERVED_COLUMNS = {"timestamp", "ticker", "label", "close", "next_close"}
+RESERVED_COLUMNS = {
+    "timestamp",
+    "ticker",
+    "label",
+    "close",
+    "next_close",
+    "next_log_return",
+    "vol_target",
+    "z_return",
+    "threshold_up",
+    "threshold_down",
+    "threshold_no_move",
+    "threshold_label",
+    "cross_sectional_rank",
+}
 
 
 @dataclass(slots=True)

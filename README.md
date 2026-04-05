@@ -46,6 +46,28 @@ Encoder-track config:
 python experiments/exp2_encoder.py
 ```
 
+Math-informed neural network (MINN) configs:
+
+```bash
+# Panel transformer + global-time split + multi-target labels + cost-aware backtest
+python -m src.pipeline.run_experiment --config experiments/exp_minn_panel.yaml
+
+# TCN encoder on window dataset
+python -m src.pipeline.run_experiment --config experiments/exp_minn_tcn.yaml
+
+# GNN-style panel model
+python -m src.pipeline.run_experiment --config experiments/exp_minn_gnn.yaml
+```
+
+The MINN path adds:
+
+- Multi-target labeling (`next_log_return`, `vol_target`, `z_return`, threshold labels, cross-sectional rank)
+- Cross-sectional feature augmentation at each timestamp
+- Optional global-time splits for panel-safe evaluation
+- Panel dataset construction for cross-sectional models
+- Probabilistic multi-head training losses and calibration metrics
+- Cost/slippage-aware backtesting
+
 ## Main Outputs
 
 - `data/processed/features.parquet` (or `.json` fallback)
