@@ -72,6 +72,13 @@ class ModelConfig:
     model_name: str = "baseline_mlp"
     hidden_dims: tuple[int, ...] = (256, 128)
     dropout: float = 0.10
+    minn_enabled: bool = False
+    multitask_output: bool = False
+    probabilistic_output: bool = False
+    include_rank_head: bool = False
+    include_regime_head: bool = False
+    regime_classes: int = 3
+    distribution: str = "gaussian"
 
 
 @dataclass(slots=True)
@@ -94,6 +101,14 @@ class TrainingConfig:
     regime_loss_weight: float = 0.0
     regression_loss: str = "huber"
     regression_huber_delta: float = 1.0
+    student_t_df: float = 3.0
+    volatility_consistency_weight: float = 0.0
+    volatility_consistency_limit: float = 2.5
+    temporal_smoothness_weight: float = 0.0
+    temporal_smoothness_max_gap_seconds: int = 3600
+    cross_sectional_reg_weight: float = 0.0
+    cross_sectional_reg_limit: float = 2.5
+    calibration_aux_weight: float = 0.0
 
 
 @dataclass(slots=True)
@@ -111,6 +126,10 @@ class BacktestConfig:
     include_costs: bool = True
     cost_bps_per_trade: float = 0.0
     slippage_bps: float = 0.0
+    signal_source: str = "classification_prob"
+    signal_mu_sigma_floor: float = 0.05
+    require_directional_agreement: bool = False
+    confidence_mu_agreement_weight: float = 0.50
 
 
 @dataclass(slots=True)

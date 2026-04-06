@@ -99,6 +99,16 @@ class ArtifactTensorDataset:
             sample["threshold_label"] = self.threshold_label[index]
         if self.rank_target is not None:
             sample["rank_target"] = self.rank_target[index]
+        if self.timestamps is not None:
+            timestamp_value = self.timestamps[index]
+            if hasattr(timestamp_value, "timestamp"):
+                try:
+                    timestamp_value = float(timestamp_value.timestamp())
+                except Exception:
+                    pass
+            sample["timestamp"] = timestamp_value
+        if self.tickers is not None:
+            sample["ticker"] = self.tickers[index]
         return sample
 
 

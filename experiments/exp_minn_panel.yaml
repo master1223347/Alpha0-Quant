@@ -43,6 +43,11 @@ model:
   model_name: panel_transformer
   hidden_dims: [256, 128]
   dropout: 0.1
+  minn_enabled: true
+  multitask_output: true
+  probabilistic_output: true
+  include_rank_head: true
+  distribution: gaussian
 
 training:
   epochs: 3
@@ -56,6 +61,14 @@ training:
   checkpoint_dir: models/checkpoints
   log_path: models/logs/training_log.json
   metrics_path: models/logs/metrics.json
+  direction_loss_weight: 0.3
+  threshold_loss_weight: 0.5
+  regression_loss_weight: 0.2
+  regression_loss: nll
+  volatility_consistency_weight: 0.02
+  temporal_smoothness_weight: 0.01
+  cross_sectional_reg_weight: 0.01
+  calibration_aux_weight: 0.01
 
 backtest:
   long_threshold: 0.52
@@ -66,3 +79,5 @@ backtest:
   include_costs: true
   cost_bps_per_trade: 1.0
   slippage_bps: 0.5
+  signal_source: confidence_plus_mu
+  require_directional_agreement: true

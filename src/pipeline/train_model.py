@@ -36,30 +36,61 @@ class TrainPipelineArtifacts:
 
 def _build_model(config: ExperimentConfig, *, num_features: int) -> Any:
     model_name = config.model.model_name.lower()
+    minn_enabled = bool(getattr(config.model, "minn_enabled", False))
+    multitask_output = bool(getattr(config.model, "multitask_output", minn_enabled))
+    probabilistic_output = bool(getattr(config.model, "probabilistic_output", minn_enabled))
+    include_rank_head = bool(getattr(config.model, "include_rank_head", False))
+    include_regime_head = bool(getattr(config.model, "include_regime_head", False))
+    regime_classes = int(getattr(config.model, "regime_classes", 3))
+    distribution = str(getattr(config.model, "distribution", "gaussian"))
     if model_name in {"baseline", "baseline_mlp", "mlp", "encoder", "encoder_mlp"}:
         return BaselineMLP(
             window_size=config.dataset.window_size,
             num_features=num_features,
             hidden_dims=tuple(config.model.hidden_dims),
             dropout=float(config.model.dropout),
+            multitask_output=multitask_output,
+            probabilistic_output=probabilistic_output,
+            include_rank_score=include_rank_head,
+            include_regime_logits=include_regime_head,
+            regime_classes=regime_classes,
+            distribution=distribution,
         )
     if model_name in {"tcn", "tcn_encoder"}:
         return tcn_encoder(
             window_size=config.dataset.window_size,
             num_features=num_features,
             dropout=float(config.model.dropout),
+            multitask_output=multitask_output,
+            include_rank_score=include_rank_head,
+            include_regime_logits=include_regime_head,
+            regime_classes=regime_classes,
+            distribution=distribution,
+            probabilistic_output=probabilistic_output,
         )
     if model_name in {"panel_transformer", "transformer", "minn_transformer"}:
         return panel_transformer(
             window_size=config.dataset.window_size,
             num_features=num_features,
             dropout=float(config.model.dropout),
+            multitask_output=multitask_output,
+            include_rank_score=include_rank_head,
+            include_regime_logits=include_regime_head,
+            regime_classes=regime_classes,
+            distribution=distribution,
+            probabilistic_output=probabilistic_output,
         )
     if model_name in {"gnn_panel", "gnn"}:
         return gnn_panel(
             window_size=config.dataset.window_size,
             num_features=num_features,
             dropout=float(config.model.dropout),
+            multitask_output=multitask_output,
+            include_rank_score=include_rank_head,
+            include_regime_logits=include_regime_head,
+            regime_classes=regime_classes,
+            distribution=distribution,
+            probabilistic_output=probabilistic_output,
         )
     raise ValueError(f"Unsupported model_name: {config.model.model_name}")
 
