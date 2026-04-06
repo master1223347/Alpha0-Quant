@@ -128,6 +128,55 @@ def _build_confidence_bucket_summary(
     }
 
 
+def _build_uncertainty_bucket_summary(
+    *,
+    validation: Any,
+    quantiles: tuple[float, float] = (0.33, 0.66),
+) -> dict[str, Any]:
+    if not validation.sigma_values or not validation.forward_returns or not validation.mean_returns:
+        return {"error": "missing sigma/return predictions for uncertainty bucket analysis"}
+    if not (len(validation.sigma_values) == len(validation.forward_returns) == len(validation.mean_returns)):
+        return {"error": "sigma/return arrays have incompatible lengths"}
+
+    import statistics
+
+    sigma = [float(value) for value in validation.sigma_values]
+    sorted_sigma = sorted(sigma)
+    if len(sorted_sigma) < 3:
+        return {"error": "not enough samples for uncertainty buckets"}
+
+    def _at_quantile(q: float) -> float:
+        idx = min(len(sorted_sigma) - 1, max(0, int(q * (len(sorted_sigma) - 1))))
+        return sorted_sigma[idx]
+
+    low_cut = _at_quantile(float(quantiles[0]))
+    high_cut = _at_quantile(float(quantiles[1]))
+    buckets: dict[str, list[int]] = {"low_sigma": [], "mid_sigma": [], "high_sigma": []}
+    for index, value in enumerate(sigma):
+        if value <= low_cut:
+            buckets["low_sigma"].append(index)
+        elif value >= high_cut:
+            buckets["high_sigma"].append(index)
+        else:
+            buckets["mid_sigma"].append(index)
+
+    result: dict[str, Any] = {"low_cut": low_cut, "high_cut": high_cut}
+    for name, indices in buckets.items():
+        if not indices:
+            result[name] = {"count": 0}
+            continue
+        errors = [
+            abs(float(validation.forward_returns[index]) - float(validation.mean_returns[index]))
+            for index in indices
+        ]
+        result[name] = {
+            "count": len(indices),
+            "mae": sum(errors) / len(errors),
+            "median_sigma": statistics.median(sigma[index] for index in indices),
+        }
+    return result
+
+
 def _is_binary_labels(values: list[float], *, tol: float = 1e-6) -> bool:
     if not values:
         return False
@@ -185,13 +234,22 @@ def run_evaluation_pipeline(
     loss_fn = build_model_loss(
         model,
         pos_weight=pos_weight,
+        distribution=str(getattr(config.model, "distribution", "gaussian")),
         direction_weight=float(getattr(config.training, "direction_loss_weight", 1.0)),
         threshold_weight=float(getattr(config.training, "threshold_loss_weight", 0.25)),
         regression_weight=float(getattr(config.training, "regression_loss_weight", 1.0)),
         rank_weight=float(getattr(config.training, "rank_loss_weight", 0.10)),
         regime_weight=float(getattr(config.training, "regime_loss_weight", 0.10)),
+        student_t_df=float(getattr(config.training, "student_t_df", 3.0)),
         regression_loss=str(getattr(config.training, "regression_loss", "nll")),
         regression_huber_delta=float(getattr(config.training, "regression_huber_delta", 1.0)),
+        volatility_consistency_weight=float(getattr(config.training, "volatility_consistency_weight", 0.0)),
+        volatility_consistency_limit=float(getattr(config.training, "volatility_consistency_limit", 2.5)),
+        temporal_smoothness_weight=float(getattr(config.training, "temporal_smoothness_weight", 0.0)),
+        temporal_smoothness_max_gap_seconds=int(getattr(config.training, "temporal_smoothness_max_gap_seconds", 3600)),
+        cross_sectional_reg_weight=float(getattr(config.training, "cross_sectional_reg_weight", 0.0)),
+        cross_sectional_reg_limit=float(getattr(config.training, "cross_sectional_reg_limit", 2.5)),
+        calibration_aux_weight=float(getattr(config.training, "calibration_aux_weight", 0.0)),
     ).to(device)
 
     include_costs = bool(getattr(config.backtest, "include_costs", True))
@@ -214,6 +272,12 @@ def run_evaluation_pipeline(
         flip_positions=bool(getattr(config.backtest, "flip_positions", False)),
         cost_bps_per_trade=cost_bps_per_trade,
         slippage_bps=slippage_bps,
+        signal_source=str(getattr(config.backtest, "signal_source", "classification_prob")),
+        mu_values=validation.mean_returns,
+        sigma_values=validation.sigma_values,
+        require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),
+        confidence_mu_agreement_weight=float(getattr(config.backtest, "confidence_mu_agreement_weight", 0.50)),
+        signal_mu_sigma_floor=float(getattr(config.backtest, "signal_mu_sigma_floor", 0.05)),
     )
 
     report = build_evaluation_report(
@@ -239,6 +303,22 @@ def run_evaluation_pipeline(
         )
         for top_percentile in confidence_bucket_sweep
     ]
+    report.metrics["uncertainty_buckets"] = _build_uncertainty_bucket_summary(validation=validation)
+    if validation.confidence_scores and validation.forward_returns:
+        high_conf_indices = [index for index, value in enumerate(validation.confidence_scores) if value >= 0.70]
+        if high_conf_indices:
+            high_conf_hit = sum(
+                1
+                for index in high_conf_indices
+                if (validation.probabilities[index] >= 0.5) == (validation.forward_returns[index] >= 0.0)
+            ) / len(high_conf_indices)
+        else:
+            high_conf_hit = float("nan")
+        report.metrics["high_confidence_reliability"] = {
+            "threshold": 0.70,
+            "sample_count": len(high_conf_indices),
+            "directional_hit_rate": float(high_conf_hit),
+        }
 
     confidence_threshold_sweep = _float_sequence(
         getattr(config.backtest, "confidence_threshold_sweep", None),
@@ -259,6 +339,12 @@ def run_evaluation_pipeline(
             flip_positions=bool(getattr(config.backtest, "flip_positions", False)),
             cost_bps_per_trade=cost_bps_per_trade,
             slippage_bps=slippage_bps,
+            signal_source=str(getattr(config.backtest, "signal_source", "classification_prob")),
+            mu_values=validation.mean_returns,
+            sigma_values=validation.sigma_values,
+            require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),
+            confidence_mu_agreement_weight=float(getattr(config.backtest, "confidence_mu_agreement_weight", 0.50)),
+            signal_mu_sigma_floor=float(getattr(config.backtest, "signal_mu_sigma_floor", 0.05)),
         ).to_dict()
         for threshold in confidence_threshold_sweep
     }

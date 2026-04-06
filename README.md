@@ -76,7 +76,17 @@ Supported `model.model_name` values:
 
 Notes:
 - `panel_transformer`, `tcn_encoder`, and `gnn_panel` output multi-head dicts (`direction_logit`, `mean_return`, `log_scale`, `threshold_logits`, optional rank/regime heads).
-- `baseline_mlp` outputs a single direction logit.
+- `baseline_mlp` can now run in legacy single-logit mode or MINN multi-head mode.
+
+MINN config switches:
+- `model.minn_enabled`, `model.multitask_output`, `model.probabilistic_output`
+- `model.distribution` (`gaussian` or `student_t`)
+- `training.regression_loss` (`nll`/`huber`) + optional `training.student_t_df`
+- math-informed regularizers:
+  - `training.volatility_consistency_weight`
+  - `training.temporal_smoothness_weight`
+  - `training.cross_sectional_reg_weight`
+  - `training.calibration_aux_weight`
 
 ## Loss Setup
 
@@ -109,6 +119,7 @@ Backtest (`src/evaluation/backtest.py`) supports:
 - execution lag (`execution_lag_bars`)
 - optional position flip (`flip_positions`)
 - transaction costs + slippage (bps)
+- signal source selection: `classification_prob`, `mu`, `mu_over_sigma`, `confidence_plus_mu`
 
 ## Leakage and Correctness Safeguards
 

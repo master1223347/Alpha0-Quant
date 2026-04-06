@@ -163,6 +163,28 @@ def extract_rank_target(batch: dict[str, Any] | None, *, device: Any) -> Any | N
     return _resolve_tensor(target, device=device, dtype=torch.float32).reshape(-1)
 
 
+def extract_timestamp_values(batch: dict[str, Any] | None) -> list[Any]:
+    if batch is None:
+        return []
+    values = batch.get("timestamp")
+    if values is None:
+        return []
+    if isinstance(values, (list, tuple)):
+        return list(values)
+    return [values]
+
+
+def extract_ticker_values(batch: dict[str, Any] | None) -> list[str]:
+    if batch is None:
+        return []
+    values = batch.get("ticker")
+    if values is None:
+        return []
+    if isinstance(values, (list, tuple)):
+        return [str(value) for value in values]
+    return [str(values)]
+
+
 def _threshold_labels(forward_return: Any, *, neutral_band: float) -> Any:
     negative = forward_return < -neutral_band
     positive = forward_return > neutral_band
@@ -203,6 +225,78 @@ def student_t_nll(target: Any, mean: Any, log_scale: Any, *, df: float = 3.0, ep
         + torch.log(scale)
     )
     return constant + 0.5 * (df_tensor + 1.0) * torch.log1p(z.pow(2) / df_tensor)
+
+
+def _safe_scale(log_scale: Any, *, eps: float = 1e-6) -> Any:
+    return F.softplus(log_scale) + eps
+
+
+def _volatility_consistency_penalty(mean_return: Any, log_scale: Any, *, limit: float) -> Any:
+    if log_scale is None:
+        scale = torch.ones_like(mean_return)
+    else:
+        scale = _safe_scale(log_scale)
+    normalized_magnitude = torch.abs(mean_return) / scale
+    return F.relu(normalized_magnitude - float(limit)).pow(2).mean()
+
+
+def _temporal_smoothness_penalty(
+    mean_return: Any,
+    timestamps: list[Any],
+    tickers: list[str],
+    *,
+    max_gap_seconds: int,
+) -> Any:
+    if mean_return.numel() < 2 or not timestamps or not tickers:
+        return mean_return.new_tensor(0.0)
+    if len(timestamps) != mean_return.numel() or len(tickers) != mean_return.numel():
+        return mean_return.new_tensor(0.0)
+
+    from datetime import datetime
+
+    def _to_epoch_seconds(value: Any) -> float | None:
+        if hasattr(value, "timestamp"):
+            try:
+                return float(value.timestamp())
+            except Exception:
+                return None
+        if isinstance(value, datetime):
+            return float(value.timestamp())
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
+
+    by_ticker: dict[str, list[tuple[float, int]]] = {}
+    for index, (timestamp, ticker) in enumerate(zip(timestamps, tickers)):
+        epoch_seconds = _to_epoch_seconds(timestamp)
+        if epoch_seconds is None:
+            continue
+        by_ticker.setdefault(ticker, []).append((epoch_seconds, index))
+
+    penalties: list[Any] = []
+    max_gap = float(max(0, int(max_gap_seconds)))
+    for entries in by_ticker.values():
+        if len(entries) < 2:
+            continue
+        entries.sort(key=lambda item: item[0])
+        for (prev_ts, prev_index), (curr_ts, curr_index) in zip(entries[:-1], entries[1:]):
+            if max_gap > 0 and (curr_ts - prev_ts) > max_gap:
+                continue
+            penalties.append((mean_return[curr_index] - mean_return[prev_index]).pow(2))
+    if not penalties:
+        return mean_return.new_tensor(0.0)
+    return torch.stack(penalties).mean()
+
+
+def _cross_sectional_extreme_penalty(mean_return: Any, *, limit: float) -> Any:
+    centered = mean_return - mean_return.mean()
+    return F.relu(torch.abs(centered) - float(limit)).pow(2).mean()
+
+
+def _calibration_alignment_penalty(direction_logit: Any, mean_return: Any) -> Any:
+    confidence = torch.sigmoid(torch.abs(direction_logit))
+    agreement = torch.sigmoid(direction_logit * torch.sign(mean_return))
+    return F.mse_loss(confidence, agreement)
 
 
 if nn is not None:
@@ -247,6 +341,13 @@ if nn is not None:
             student_t_df: float = 3.0,
             regression_loss: str = "nll",
             regression_huber_delta: float = 1.0,
+            volatility_consistency_weight: float = 0.0,
+            volatility_consistency_limit: float = 2.5,
+            temporal_smoothness_weight: float = 0.0,
+            temporal_smoothness_max_gap_seconds: int = 3600,
+            cross_sectional_reg_weight: float = 0.0,
+            cross_sectional_reg_limit: float = 2.5,
+            calibration_aux_weight: float = 0.0,
         ) -> None:
             super().__init__()
             self.direction_weight = float(direction_weight)
@@ -259,6 +360,13 @@ if nn is not None:
             self.student_t_df = float(student_t_df)
             self.regression_loss = str(regression_loss).lower().strip()
             self.regression_huber_delta = float(regression_huber_delta)
+            self.volatility_consistency_weight = float(volatility_consistency_weight)
+            self.volatility_consistency_limit = float(volatility_consistency_limit)
+            self.temporal_smoothness_weight = float(temporal_smoothness_weight)
+            self.temporal_smoothness_max_gap_seconds = int(temporal_smoothness_max_gap_seconds)
+            self.cross_sectional_reg_weight = float(cross_sectional_reg_weight)
+            self.cross_sectional_reg_limit = float(cross_sectional_reg_limit)
+            self.calibration_aux_weight = float(calibration_aux_weight)
 
             if pos_weight is None:
                 self.pos_weight = None
@@ -329,6 +437,38 @@ if nn is not None:
                         components[f"{self.distribution}_nll"] = float(reg_loss.detach().cpu().item())
                 total = total + self.regression_weight * reg_loss
 
+                if self.volatility_consistency_weight > 0:
+                    volatility_penalty = _volatility_consistency_penalty(
+                        mean_return,
+                        log_scale.reshape(-1) if log_scale is not None else None,
+                        limit=self.volatility_consistency_limit,
+                    )
+                    total = total + self.volatility_consistency_weight * volatility_penalty
+                    components["volatility_consistency_loss"] = float(volatility_penalty.detach().cpu().item())
+
+                if self.temporal_smoothness_weight > 0:
+                    smoothness_penalty = _temporal_smoothness_penalty(
+                        mean_return,
+                        extract_timestamp_values(batch),
+                        extract_ticker_values(batch),
+                        max_gap_seconds=self.temporal_smoothness_max_gap_seconds,
+                    )
+                    total = total + self.temporal_smoothness_weight * smoothness_penalty
+                    components["temporal_smoothness_loss"] = float(smoothness_penalty.detach().cpu().item())
+
+                if self.cross_sectional_reg_weight > 0:
+                    cross_sectional_penalty = _cross_sectional_extreme_penalty(
+                        mean_return,
+                        limit=self.cross_sectional_reg_limit,
+                    )
+                    total = total + self.cross_sectional_reg_weight * cross_sectional_penalty
+                    components["cross_sectional_reg_loss"] = float(cross_sectional_penalty.detach().cpu().item())
+
+                if self.calibration_aux_weight > 0 and direction_target is not None:
+                    calibration_penalty = _calibration_alignment_penalty(direction_logit.reshape(-1), mean_return)
+                    total = total + self.calibration_aux_weight * calibration_penalty
+                    components["calibration_alignment_loss"] = float(calibration_penalty.detach().cpu().item())
+
             threshold_logits = extract_threshold_logits(outputs)
             if threshold_logits is not None:
                 threshold_target = extract_threshold_target(batch, device=device)
@@ -377,6 +517,13 @@ def build_model_loss(
     student_t_df: float = 3.0,
     regression_loss: str = "nll",
     regression_huber_delta: float = 1.0,
+    volatility_consistency_weight: float = 0.0,
+    volatility_consistency_limit: float = 2.5,
+    temporal_smoothness_weight: float = 0.0,
+    temporal_smoothness_max_gap_seconds: int = 3600,
+    cross_sectional_reg_weight: float = 0.0,
+    cross_sectional_reg_limit: float = 2.5,
+    calibration_aux_weight: float = 0.0,
 ) -> Any:
     if nn is None:
         raise ModuleNotFoundError("torch is required to build losses")
@@ -396,5 +543,12 @@ def build_model_loss(
             student_t_df=student_t_df,
             regression_loss=regression_loss,
             regression_huber_delta=regression_huber_delta,
+            volatility_consistency_weight=volatility_consistency_weight,
+            volatility_consistency_limit=volatility_consistency_limit,
+            temporal_smoothness_weight=temporal_smoothness_weight,
+            temporal_smoothness_max_gap_seconds=temporal_smoothness_max_gap_seconds,
+            cross_sectional_reg_weight=cross_sectional_reg_weight,
+            cross_sectional_reg_limit=cross_sectional_reg_limit,
+            calibration_aux_weight=calibration_aux_weight,
         )
     return DirectionOnlyLoss(pos_weight=pos_weight)

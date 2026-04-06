@@ -43,6 +43,11 @@ model:
   model_name: gnn_panel
   hidden_dims: [256, 128]
   dropout: 0.1
+  minn_enabled: true
+  multitask_output: true
+  probabilistic_output: true
+  include_rank_head: true
+  distribution: gaussian
 
 training:
   epochs: 4
@@ -56,6 +61,12 @@ training:
   checkpoint_dir: models/checkpoints
   log_path: models/logs/training_log.json
   metrics_path: models/logs/metrics.json
+  direction_loss_weight: 0.20
+  threshold_loss_weight: 0.60
+  regression_loss_weight: 0.20
+  regression_loss: nll
+  volatility_consistency_weight: 0.02
+  cross_sectional_reg_weight: 0.02
 
 backtest:
   long_threshold: 0.55
@@ -65,3 +76,4 @@ backtest:
   include_costs: true
   cost_bps_per_trade: 1.0
   slippage_bps: 0.5
+  signal_source: mu

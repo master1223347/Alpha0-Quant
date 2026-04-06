@@ -43,6 +43,10 @@ model:
   model_name: tcn_encoder
   hidden_dims: [256, 128]
   dropout: 0.1
+  minn_enabled: true
+  multitask_output: true
+  probabilistic_output: true
+  distribution: student_t
 
 training:
   epochs: 4
@@ -56,6 +60,13 @@ training:
   checkpoint_dir: models/checkpoints
   log_path: models/logs/training_log.json
   metrics_path: models/logs/metrics.json
+  direction_loss_weight: 0.25
+  threshold_loss_weight: 0.55
+  regression_loss_weight: 0.20
+  regression_loss: nll
+  student_t_df: 4.0
+  volatility_consistency_weight: 0.02
+  temporal_smoothness_weight: 0.02
 
 backtest:
   long_threshold: 0.55
@@ -65,3 +76,4 @@ backtest:
   include_costs: true
   cost_bps_per_trade: 1.0
   slippage_bps: 0.5
+  signal_source: mu_over_sigma

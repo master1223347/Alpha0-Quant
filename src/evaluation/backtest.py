@@ -56,6 +56,13 @@ def run_backtest(
     flip_positions: bool = False,
     cost_bps_per_trade: float = 0.0,
     slippage_bps: float = 0.0,
+    signal_scores: list[float] | None = None,
+    signal_source: str = "classification_prob",
+    mu_values: list[float] | None = None,
+    sigma_values: list[float] | None = None,
+    require_directional_agreement: bool = False,
+    confidence_mu_agreement_weight: float = 0.50,
+    signal_mu_sigma_floor: float = 0.05,
 ) -> BacktestReport:
     """Run a threshold-based long/short strategy."""
     if probabilities is None and (up_probabilities is None or down_probabilities is None):
@@ -82,6 +89,35 @@ def run_backtest(
         raise ValueError("top_percentile must be in (0, 1]")
 
     confidence_scores = [max(float(up), float(down)) for up, down in zip(up_probabilities, down_probabilities)]
+    blended_scores = signal_scores
+    source = str(signal_source).strip().lower()
+    if blended_scores is None and source != "classification_prob":
+        mu = [float(value) for value in (mu_values or [0.0 for _ in up_probabilities])]
+        if len(mu) != len(up_probabilities):
+            mu = [0.0 for _ in up_probabilities]
+        if sigma_values is None:
+            sigma = [1.0 for _ in up_probabilities]
+        else:
+            sigma = [max(float(signal_mu_sigma_floor), float(value)) for value in sigma_values]
+            if len(sigma) != len(up_probabilities):
+                sigma = [1.0 for _ in up_probabilities]
+        directional_confidence = [
+            float(up - down) for up, down in zip(up_probabilities, down_probabilities)
+        ]
+        if source == "mu":
+            blended_scores = list(mu)
+        elif source == "mu_over_sigma":
+            blended_scores = [float(m) / float(s) for m, s in zip(mu, sigma)]
+        elif source == "confidence_plus_mu":
+            weight = float(confidence_mu_agreement_weight)
+            blended_scores = [
+                (weight * directional_confidence[index]) + ((1.0 - weight) * mu[index])
+                for index in range(len(up_probabilities))
+            ]
+        else:
+            blended_scores = directional_confidence
+    if blended_scores is not None and len(blended_scores) != len(up_probabilities):
+        blended_scores = None
     selected_indices = set(range(len(up_probabilities)))
     if top_percentile is not None:
         keep_count = max(1, int(len(up_probabilities) * float(top_percentile)))
@@ -108,16 +144,26 @@ def run_backtest(
         elif not math.isfinite(float(up_probability)) or not math.isfinite(float(down_probability)):
             nan_signal_count += 1
         else:
+            score = float(blended_scores[index]) if blended_scores is not None else float(up_probability - down_probability)
             if confidence_threshold is not None:
                 if up_probability >= float(confidence_threshold) and up_probability > down_probability:
                     raw_position = 1
                 elif down_probability >= float(confidence_threshold) and down_probability > up_probability:
                     raw_position = -1
             else:
-                if up_probability >= long_threshold and up_probability > down_probability:
+                if blended_scores is not None:
+                    if score > 0:
+                        raw_position = 1
+                    elif score < 0:
+                        raw_position = -1
+                elif up_probability >= long_threshold and up_probability > down_probability:
                     raw_position = 1
                 elif down_probability >= short_threshold and down_probability > up_probability:
                     raw_position = -1
+            if require_directional_agreement and blended_scores is not None:
+                directional_sign = 1 if up_probability >= down_probability else -1
+                if raw_position != 0 and (1 if raw_position > 0 else -1) != directional_sign:
+                    raw_position = 0
 
         position = -raw_position if flip_positions else raw_position
         signal_positions.append(position)

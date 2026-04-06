@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -33,6 +34,7 @@ class ValidationResult:
     forward_returns: list[float]
     mean_returns: list[float]
     log_scales: list[float]
+    sigma_values: list[float]
 
     def to_dict(self) -> dict[str, Any]:
         output = asdict(self)
@@ -76,6 +78,7 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
     forward_returns: list[float] = []
     mean_returns: list[float] = []
     log_scales: list[float] = []
+    sigma_values: list[float] = []
 
     with torch.no_grad():
         for batch in dataloader:
@@ -133,7 +136,9 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
 
             log_scale = extract_log_scale(outputs)
             if log_scale is not None:
-                log_scales.extend(float(value) for value in log_scale.detach().cpu().reshape(-1).tolist())
+                log_values = [float(value) for value in log_scale.detach().cpu().reshape(-1).tolist()]
+                log_scales.extend(log_values)
+                sigma_values.extend(float(math.log1p(math.exp(value)) + 1e-6) for value in log_values)
 
     avg_loss = total_loss / batch_count if batch_count > 0 else 0.0
     if up_probabilities and down_probabilities:
@@ -189,4 +194,5 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
         forward_returns=forward_returns,
         mean_returns=mean_returns,
         log_scales=log_scales,
+        sigma_values=sigma_values,
     )

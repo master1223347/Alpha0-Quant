@@ -65,6 +65,7 @@ if nn is not None:
             include_regime_logits: bool = False,
             regime_classes: int = 3,
             distribution: str = "student_t",
+            probabilistic_output: bool = True,
         ) -> None:
             super().__init__()
             if window_size <= 0 or num_features <= 0:
@@ -78,6 +79,7 @@ if nn is not None:
             self.include_rank_score = include_rank_score
             self.include_regime_logits = include_regime_logits
             self.distribution = distribution
+            self.probabilistic_output = bool(probabilistic_output)
 
             blocks: list[nn.Module] = []
             in_channels = num_features
@@ -125,10 +127,11 @@ if nn is not None:
 
             outputs: dict[str, torch.Tensor] = {
                 "direction_logit": direction_logit,
-                "mean_return": self.mean_head(latent).squeeze(-1),
-                "log_scale": self.log_scale_head(latent).squeeze(-1),
                 "threshold_logits": self.threshold_head(latent),
             }
+            if self.probabilistic_output:
+                outputs["mean_return"] = self.mean_head(latent).squeeze(-1)
+                outputs["log_scale"] = self.log_scale_head(latent).squeeze(-1)
             if self.rank_head is not None:
                 outputs["rank_score"] = self.rank_head(latent).squeeze(-1)
             if self.regime_head is not None:
@@ -144,4 +147,3 @@ else:
     class tcn_encoder:  # type: ignore[override]
         def __init__(self, *args, **kwargs) -> None:
             raise ModuleNotFoundError("torch is required to use tcn_encoder")
-

@@ -75,13 +75,22 @@ def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> Trainin
     loss_fn = build_model_loss(
         model,
         pos_weight=pos_weight,
+        distribution=str(getattr(config.model, "distribution", "gaussian")),
         direction_weight=float(getattr(config.training, "direction_loss_weight", 1.0)),
         threshold_weight=float(getattr(config.training, "threshold_loss_weight", 0.25)),
         regression_weight=float(getattr(config.training, "regression_loss_weight", 1.0)),
         rank_weight=float(getattr(config.training, "rank_loss_weight", 0.10)),
         regime_weight=float(getattr(config.training, "regime_loss_weight", 0.10)),
+        student_t_df=float(getattr(config.training, "student_t_df", 3.0)),
         regression_loss=str(getattr(config.training, "regression_loss", "nll")),
         regression_huber_delta=float(getattr(config.training, "regression_huber_delta", 1.0)),
+        volatility_consistency_weight=float(getattr(config.training, "volatility_consistency_weight", 0.0)),
+        volatility_consistency_limit=float(getattr(config.training, "volatility_consistency_limit", 2.5)),
+        temporal_smoothness_weight=float(getattr(config.training, "temporal_smoothness_weight", 0.0)),
+        temporal_smoothness_max_gap_seconds=int(getattr(config.training, "temporal_smoothness_max_gap_seconds", 3600)),
+        cross_sectional_reg_weight=float(getattr(config.training, "cross_sectional_reg_weight", 0.0)),
+        cross_sectional_reg_limit=float(getattr(config.training, "cross_sectional_reg_limit", 2.5)),
+        calibration_aux_weight=float(getattr(config.training, "calibration_aux_weight", 0.0)),
     ).to(device)
 
     optimizer = torch.optim.AdamW(
