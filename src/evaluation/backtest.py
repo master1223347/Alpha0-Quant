@@ -19,9 +19,11 @@ class BacktestReport:
     long_count: int
     short_count: int
     flat_count: int
+    flip_positions: bool = False
     nan_signal_count: int = 0
     cost_bps_per_trade: float = 0.0
     slippage_bps: float = 0.0
+    equity_curve: list[float] | None = None
 
     def to_dict(self) -> dict[str, float | int]:
         return asdict(self)
@@ -43,6 +45,7 @@ def run_backtest(
     long_threshold: float = 0.55,
     short_threshold: float = 0.45,
     periods_per_year: int = 252 * 78,
+    flip_positions: bool = False,
     cost_bps_per_trade: float = 0.0,
     slippage_bps: float = 0.0,
 ) -> BacktestReport:
@@ -67,18 +70,22 @@ def run_backtest(
     slippage_pnl = 0.0
 
     for probability, current_close, future_close in zip(probabilities, close, next_close):
+        raw_position = 0
         if not math.isfinite(float(probability)):
-            position = 0
             nan_signal_count += 1
-            flat_count += 1
         elif probability >= long_threshold:
-            position = 1
-            long_count += 1
+            raw_position = 1
         elif probability <= short_threshold:
-            position = -1
+            raw_position = -1
+        else:
+            raw_position = 0
+
+        position = -raw_position if flip_positions else raw_position
+        if position > 0:
+            long_count += 1
+        elif position < 0:
             short_count += 1
         else:
-            position = 0
             flat_count += 1
 
         turnover = abs(position - previous_position)
@@ -109,8 +116,10 @@ def run_backtest(
     equity = 1.0
     peak = 1.0
     max_drawdown = 0.0
+    equity_curve: list[float] = [equity]
     for strategy_return in net_returns:
         equity *= 1.0 + strategy_return
+        equity_curve.append(equity)
         if equity > peak:
             peak = equity
         drawdown = (equity - peak) / peak
@@ -136,7 +145,9 @@ def run_backtest(
         long_count=long_count,
         short_count=short_count,
         flat_count=flat_count,
+        flip_positions=bool(flip_positions),
         nan_signal_count=nan_signal_count,
         cost_bps_per_trade=float(cost_bps_per_trade),
         slippage_bps=float(slippage_bps),
+        equity_curve=equity_curve,
     )

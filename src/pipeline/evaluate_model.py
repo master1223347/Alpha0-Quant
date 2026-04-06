@@ -95,6 +95,7 @@ def run_evaluation_pipeline(
         long_threshold=config.backtest.long_threshold,
         short_threshold=config.backtest.short_threshold,
         periods_per_year=config.backtest.periods_per_year,
+        flip_positions=bool(getattr(config.backtest, "flip_positions", False)),
         cost_bps_per_trade=cost_bps_per_trade,
         slippage_bps=slippage_bps,
     )

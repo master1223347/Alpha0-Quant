@@ -2,15 +2,15 @@ name: minn_panel_transformer
 
 data:
   raw_root: data/raw
-  max_tickers: 40
-  min_sequence_length: 19
+  max_tickers: 200
+  min_sequence_length: 12
 
 universe:
   exchange: null
   asset_type: null
   tickers: null
-  max_tickers: 40
-  min_sequence_length: 19
+  max_tickers: 200
+  min_sequence_length: 12
 
 targets:
   horizon: 1
@@ -45,7 +45,7 @@ model:
   dropout: 0.1
 
 training:
-  epochs: 2
+  epochs: 3
   learning_rate: 0.001
   weight_decay: 0.0001
   scheduler_name: cosine
@@ -58,10 +58,11 @@ training:
   metrics_path: models/logs/metrics.json
 
 backtest:
-  long_threshold: 0.55
-  short_threshold: 0.45
+  long_threshold: 0.52
+  short_threshold: 0.48
   periods_per_year: 19656
   split_mode: global_time
+  flip_positions: false
   include_costs: true
   cost_bps_per_trade: 1.0
   slippage_bps: 0.5

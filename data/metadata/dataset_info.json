@@ -59,9 +59,9 @@
     "cs_volume_zscore_zscore"
   ],
   "split_row_counts": {
-    "train": 517,
-    "val": 129,
-    "test": 119
+    "train": 1705,
+    "val": 396,
+    "test": 351
   },
   "window_size": 8,
   "stride": 1,

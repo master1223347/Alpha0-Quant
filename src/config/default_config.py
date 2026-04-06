@@ -89,6 +89,7 @@ class BacktestConfig:
     short_threshold: float = 0.45
     periods_per_year: int = 252 * 78
     split_mode: str = "global_time"
+    flip_positions: bool = False
     include_costs: bool = True
     cost_bps_per_trade: float = 0.0
     slippage_bps: float = 0.0

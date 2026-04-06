@@ -162,6 +162,26 @@ def _validate_split_integrity(
             split_mode,
             overlap_counts,
         )
+
+    train_timestamps = timestamp_sets.get("train", set())
+    val_timestamps = timestamp_sets.get("val", set())
+    test_timestamps = timestamp_sets.get("test", set())
+    if train_timestamps and val_timestamps and max(train_timestamps) > min(val_timestamps):
+        LOGGER.warning(
+            "Potential temporal leakage: %s split has train timestamps beyond validation start "
+            "(max(train)=%s, min(val)=%s)",
+            split_mode,
+            max(train_timestamps),
+            min(val_timestamps),
+        )
+    if val_timestamps and test_timestamps and max(val_timestamps) > min(test_timestamps):
+        LOGGER.warning(
+            "Potential temporal leakage: %s split has validation timestamps beyond test start "
+            "(max(val)=%s, min(test)=%s)",
+            split_mode,
+            max(val_timestamps),
+            min(test_timestamps),
+        )
     return overlap_counts
 
 

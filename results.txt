@@ -1,4 +1,4 @@
-Alpha0 Quant - Model Run Results (Updated)
+Alpha0 Quant - Model Run Results
 Date: 2026-04-05
 
 Run command:
@@ -12,46 +12,47 @@ Config:
 - checkpoint: models/checkpoints/best_model.pt
 
 Training (models/logs/metrics.json):
-- best_epoch: 2
-- best_score (selection metric): 0.6064034665382764
-- final_validation.accuracy: 0.49612403100775193
-- final_validation.precision: 0.75
-- final_validation.recall: 0.04477611940298507
-- final_validation.auc: 0.6064034665382764
-- final_validation.brier_score: 0.25108411534469277
-- final_validation.ece: 0.09635164799825241
-- final_validation.return_mae: 0.10779981727494509
-- final_validation.return_rmse: 0.1234485038114464
-- final_validation.return_nll: -0.00550547197242316
-- final_validation.avg_predicted_return: -0.10369612036864886
-- final_validation.avg_actual_return: 0.00003333838937345887
+- best_epoch: 1
+- best_score (selection metric): 0.5680748772504092
+- final_validation.accuracy: 0.5202020202020202
+- final_validation.precision: 0.49673202614379086
+- final_validation.recall: 0.8085106382978723
+- final_validation.auc: 0.5680748772504092
+- final_validation.brier_score: 0.24907526109138886
+- final_validation.ece: 0.04133947054183695
+- final_validation.return_mae: 0.16582666249953398
+- final_validation.return_rmse: 0.17435694318648118
+- final_validation.return_nll: -0.2385814103301663
+- final_validation.avg_predicted_return: -0.16573885901633537
+- final_validation.avg_actual_return: 5.385783033098693e-05
 
 Evaluation Report (models/logs/evaluation_report.json):
 - split: test
-- accuracy: 0.46218487394957986
-- precision: 0.0
-- recall: 0.0
-- auc: 0.45482954545454546
-- brier_score: 0.2651784483174446
-- ece: 0.11917555351294365
-- return_mae: 0.0723628570398501
-- return_rmse: 0.0848674306800447
-- return_nll: -0.04060378392159118
-- avg_predicted_return: -0.006287808506553914
-- avg_actual_return: 0.000027068834032350025
+- accuracy: 0.48717948717948717
+- precision: 0.5357142857142857
+- recall: 0.6122448979591837
+- auc: 0.4704739960500329
+- brier_score: 0.25027500116187335
+- ece: 0.05136994100523691
+- return_mae: 0.16864694144366973
+- return_rmse: 0.17506286308371272
+- return_nll: -0.2479733451184217
+- avg_predicted_return: -0.16807020147811313
+- avg_actual_return: 0.0005767399655566088
 
 Backtest (models/logs/backtest.json):
-- pnl: -0.011636282402911816
-- gross_pnl: -0.009836282402911817
-- transaction_cost_pnl: -0.0012000000000000003
-- slippage_pnl: -0.0006000000000000002
-- sharpe: -5.6549876234973375
-- max_drawdown: -0.03066217293119195
-- hit_rate: 0.4326923076923077
-- trade_count: 12
-- long_count: 0
-- short_count: 104
-- flat_count: 15
+- pnl: 0.012650226299705802
+- gross_pnl: 0.0186502262997058
+- transaction_cost_pnl: -0.0039999999999999975
+- slippage_pnl: -0.0019999999999999987
+- sharpe: 3.2620204774248682
+- max_drawdown: -0.027389060717616428
+- hit_rate: 0.5185185185185185
+- trade_count: 40
+- long_count: 72
+- short_count: 9
+- flat_count: 270
+- flip_positions: False
 - nan_signal_count: 0
 - cost_bps_per_trade: 1.0
 - slippage_bps: 0.5
