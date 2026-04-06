@@ -1,135 +1,53 @@
-Alpha0 Quant - Model Run Results
-Date: 2026-04-05
+Alpha0 Quant - Latest Run Results
+Date: 2026-04-05 17:51:32
 
 Run command:
-.venv/bin/python -m src.pipeline.run_experiment --config experiments/exp_minn_panel.yaml
+.venv/bin/python -m src.pipeline.run_experiment --config experiments/exp_vol_confidence_panel.yaml
 
 Config:
-- name: minn_panel_transformer
+- name: vol_confidence_panel_transformer
 - model: panel_transformer
-- dataset_type: panel
-- split_mode: global_time
-- checkpoint: models/checkpoints/best_model.pt
+- objective: 3-class vol_direction_label + Huber(vol_target_clipped)
+- loss weights: cls=0.8, reg=0.2
 
-Training (models/logs/metrics.json):
-- best_epoch: 1
-- best_score (selection metric): 0.5680748772504092
-- final_validation.accuracy: 0.5202020202020202
-- final_validation.precision: 0.49673202614379086
-- final_validation.recall: 0.8085106382978723
-- final_validation.auc: 0.5680748772504092
-- final_validation.brier_score: 0.24907526109138886
-- final_validation.ece: 0.04133947054183695
-- final_validation.return_mae: 0.16582666249953398
-- final_validation.return_rmse: 0.17435694318648118
-- final_validation.return_nll: -0.2385814103301663
-- final_validation.avg_predicted_return: -0.16573885901633537
-- final_validation.avg_actual_return: 5.385783033098693e-05
+Training (models/logs/vol_confidence/metrics.json):
+- best_epoch: 4
+- best_score (selection metric): 0.4721963342652998
+- final_validation.accuracy: 0.45374449339207046
+- final_validation.precision: 0.45454545454545453
+- final_validation.recall: 0.3448275862068966
+- final_validation.auc: 0.4721963342652998
 
-Evaluation Report (models/logs/evaluation_report.json):
-- split: test
-- accuracy: 0.48717948717948717
-- precision: 0.5357142857142857
-- recall: 0.6122448979591837
-- auc: 0.4704739960500329
-- brier_score: 0.25027500116187335
-- ece: 0.05136994100523691
-- return_mae: 0.16864694144366973
-- return_rmse: 0.17506286308371272
-- return_nll: -0.2479733451184217
-- avg_predicted_return: -0.16807020147811313
-- avg_actual_return: 0.0005767399655566088
+Evaluation Report (models/logs/vol_confidence/evaluation_report.json):
+- accuracy (non-neutral directional): 0.47783251231527096
+- precision (non-neutral directional): 0.6041666666666666
+- recall (non-neutral directional): 0.25
+- auc: 0.520709472849782
+- best_confidence_bucket.top_percentile: 0.05
+- best_confidence_bucket.directional_accuracy: 0.5454545454545454
+- best_confidence_bucket.hit_rate: 0.46153846153846156
+- best_confidence_bucket.sharpe_after_costs: -13.070712348061258
+- best_confidence_bucket.trade_count: 8
 
-Backtest (models/logs/backtest.json):
-- pnl: 0.012650226299705802
-- gross_pnl: 0.0186502262997058
-- transaction_cost_pnl: -0.0039999999999999975
-- slippage_pnl: -0.0019999999999999987
-- sharpe: 3.2620204774248682
-- max_drawdown: -0.027389060717616428
-- hit_rate: 0.5185185185185185
-- trade_count: 40
-- long_count: 72
-- short_count: 9
-- flat_count: 270
-- flip_positions: False
-- nan_signal_count: 0
-- cost_bps_per_trade: 1.0
-- slippage_bps: 0.5
+Backtest (models/logs/vol_confidence/backtest.json):
+- pnl: 0.0
+- sharpe: 0.0
+- trade_count: 0
 
----
-
-Alpha0 Quant - Complex Model Double Check (Tiny Runs)
-Date: 2026-04-05
-
-Run command:
-.venv/bin/python (inline runner) using experiments/baseline_plus_cross_sectional_rank.yaml with overrides
-
-Setup:
-- models: panel_transformer, tcn_encoder, gnn_panel
-- seeds: 7, 42, 99
-- max_tickers: 20
-- epochs: 3
-- batch_size: 128
-- detailed artifacts: models/logs/complex_double_check/
-
-Per-run:
-- panel_transformer seed=7: test_auc=0.539130, pnl=0.009104, sharpe=18.911, trades=9, avg_pred=0.073170, avg_actual=0.038697
-- panel_transformer seed=42: test_auc=0.473913, pnl=-0.007658, sharpe=-16.747, trades=7, avg_pred=-0.097684, avg_actual=0.038697
-- panel_transformer seed=99: test_auc=0.476087, pnl=0.007616, sharpe=14.149, trades=6, avg_pred=0.914518, avg_actual=0.500000
-- tcn_encoder seed=7: test_auc=0.497826, pnl=0.000000, sharpe=0.000, trades=0, avg_pred=0.017128, avg_actual=0.038697
-- tcn_encoder seed=42: test_auc=0.536957, pnl=0.000000, sharpe=0.000, trades=0, avg_pred=-0.064907, avg_actual=0.038697
-- tcn_encoder seed=99: test_auc=0.380435, pnl=0.000000, sharpe=0.000, trades=0, avg_pred=-0.033732, avg_actual=0.500000
-- gnn_panel seed=7: test_auc=0.482609, pnl=-0.016209, sharpe=-23.135, trades=18, avg_pred=0.101648, avg_actual=0.038697
-- gnn_panel seed=42: test_auc=0.554348, pnl=-0.020405, sharpe=-34.203, trades=26, avg_pred=0.004795, avg_actual=0.038697
-- gnn_panel seed=99: test_auc=0.439130, pnl=-0.007259, sharpe=-10.972, trades=8, avg_pred=0.504658, avg_actual=0.500000
-
-Aggregate (mean +/- std):
-- panel_transformer: test_auc=0.496377 +/- 0.030244, pnl=0.003021 +/- 0.007575, sharpe=5.438 +/- 15.807, trade_count=7.333 +/- 1.247
-- tcn_encoder: test_auc=0.471739 +/- 0.066509, pnl=0.000000 +/- 0.000000, sharpe=0.000 +/- 0.000, trade_count=0.000 +/- 0.000
-- gnn_panel: test_auc=0.492029 +/- 0.047507, pnl=-0.014624 +/- 0.005482, sharpe=-22.770 +/- 9.488, trade_count=17.333 +/- 7.364
-
-Notes:
-- This was a tiny diagnostic sweep for directional consistency, not a production run.
-- Validation AUC is NaN for these tiny runs because some validation splits collapse to a single class.
-- Full JSON summary: models/logs/complex_double_check/summary.json
-- Text summary: models/logs/complex_double_check/results.txt
-
----
-
-Alpha0 Quant - Volatility-Filtered Direction + Confidence-Filtered Alpha
-Date: 2026-04-05
-
-Config baseline:
-- config: experiments/exp_vol_confidence_panel.yaml
-- target: 3-class vol_direction_label
-- label rule: up if r[t+1] > k*sigma[t], down if r[t+1] < -k*sigma[t], neutral otherwise
-- regression target: vol_target_clipped
-- loss: 0.8 * cross_entropy + 0.2 * huber
-- confidence buckets: top 5%, 10%, 20%
-- threshold sweep: confidence in {0.55, 0.60, 0.65, 0.70}
-
-k sweep run:
+k Sweep (models/logs/vol_confidence_sweep/summary.json):
 - k values: 0.15, 0.25, 0.35
 - seeds: 7, 42
-- output: models/logs/vol_confidence_sweep/summary.json
-- text: models/logs/vol_confidence_sweep/results.txt
+- k=0.15: directional_accuracy_mean=0.43577981651376146, test_auc_mean=0.43385380919698013, best_bucket_hit_rate_mean=0.3653846153846154, best_bucket_sharpe_mean=-7.397809810816881
+- k=0.25: directional_accuracy_mean=0.4507389162561576, test_auc_mean=0.49707689258818866, best_bucket_hit_rate_mean=0.42307692307692313, best_bucket_sharpe_mean=-3.7836299781733542
+- k=0.35: directional_accuracy_mean=0.48138297872340424, test_auc_mean=0.5169608861197645, best_bucket_hit_rate_mean=0.4326923076923077, best_bucket_sharpe_mean=-1.9085207088258622
 
-Best confidence-selected slice (tiny sweep):
-- k: 0.15
+Best overall sweep slice:
+- k: 0.35
 - seed: 7
-- directional hit rate on volatility-filtered non-neutral labels (top 10% confidence): 0.6087
-- trade hit rate (after execution + costs context): 0.5385
-- Sharpe on top-confidence trades after costs: 4.076
-- trade_count: 16
-- pnl_after_costs: 0.005363
-
-Aggregate sanity across k (2 seeds each):
-- k=0.15: directional_accuracy_mean=0.4472, test_auc_mean=0.5046, best_bucket_sharpe_mean=-1.372
-- k=0.25: directional_accuracy_mean=0.4507, test_auc_mean=0.4971, best_bucket_sharpe_mean=-3.784
-- k=0.35: directional_accuracy_mean=0.4814, test_auc_mean=0.5170, best_bucket_sharpe_mean=-1.909
-
-Interpretation:
-- Confidence-threshold-only trading remained too strict (often 0 trades).
-- Top-confidence bucket selection produced tradable slices and the best observed headline metrics.
-- Results are currently high-variance and should be treated as research signals, not a stable production claim.
+- directional_accuracy_non_neutral: 0.5319148936170213
+- best_bucket.top_percentile: 0.2
+- best_bucket.directional_accuracy: 0.5365853658536586
+- best_bucket.hit_rate: 0.5576923076923077
+- best_bucket.sharpe_after_costs: 1.7879212508833955
+- best_bucket.trade_count: 24
+- best_bucket.pnl_after_costs: 0.004063612735450278
