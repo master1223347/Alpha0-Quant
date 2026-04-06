@@ -59,25 +59,31 @@
     "cs_volume_zscore_zscore"
   ],
   "split_row_counts": {
-    "train": 1705,
-    "val": 396,
-    "test": 351
+    "train": 1169,
+    "val": 268,
+    "test": 261
   },
   "window_size": 8,
   "stride": 1,
   "dataset_type": "panel",
   "split_mode": "global_time",
-  "primary_target": "label",
-  "return_target": "next_log_return",
+  "primary_target": "vol_direction_label",
+  "return_target": "vol_target_clipped",
   "target_columns": [
     "next_log_return",
     "vol_target",
+    "vol_target_clipped",
+    "vol_threshold",
     "z_return",
     "label",
     "threshold_up",
     "threshold_down",
     "threshold_no_move",
     "threshold_label",
+    "vol_direction_up",
+    "vol_direction_down",
+    "vol_direction_neutral",
+    "vol_direction_label",
     "cross_sectional_rank"
   ],
   "context_size": 8,

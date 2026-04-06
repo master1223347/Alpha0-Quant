@@ -91,6 +91,10 @@ def _feature_columns_from_sequence(sequence: list[dict[str, Any]]) -> list[str]:
     return sorted(key for key in sequence[0].keys() if key not in {"timestamp", "ticker", "close"})
 
 
+def _use_cross_sectional_features(config: ExperimentConfig) -> bool:
+    return bool(getattr(config.features, "use_cross_sectional", True))
+
+
 def build_features_for_ticker(ticker_file: TickerFile, config: ExperimentConfig) -> list[list[dict[str, Any]]]:
     """Build merged feature sequences for a single ticker file."""
     raw_rows = load_ticker_file(ticker_file.path)
@@ -190,7 +194,8 @@ def build_feature_store(
             base_feature_columns = _feature_columns_from_sequence(sequences[0])
 
     flattened_rows = [row for sequences in ticker_sequences.values() for sequence in sequences for row in sequence]
-    if flattened_rows and base_feature_columns:
+    use_cross_sectional = _use_cross_sectional_features(config)
+    if flattened_rows and base_feature_columns and use_cross_sectional:
         apply_cross_sectional_features(flattened_rows, feature_columns=base_feature_columns)
         feature_columns = base_feature_columns + cross_sectional_feature_columns(base_feature_columns)
         for ticker, sequences in ticker_sequences.items():
@@ -202,7 +207,7 @@ def build_feature_store(
                     raise_on_error=True,
                 )
     elif flattened_rows:
-        feature_columns = _feature_columns_from_sequence(flattened_rows[:1])
+        feature_columns = base_feature_columns or _feature_columns_from_sequence(flattened_rows[:1])
 
     output_path = _write_feature_rows(config.data.features_path, flattened_rows)
     LOGGER.info("Feature rows written to %s", output_path)

@@ -34,7 +34,12 @@ class TargetConfig:
     threshold: float = 0.001
     volatility_window: int = 20
     zscore_window: int = 20
-    primary_target: str = "label"
+    volatility_label_k: float = 0.25
+    regression_clip: float = 3.0
+    primary_target: str = "vol_direction_label"
+    return_target: str = "vol_target_clipped"
+    threshold_target: str = "vol_direction_label"
+    direction_target: str = "label"
 
 
 @dataclass(slots=True)
@@ -44,6 +49,7 @@ class FeatureConfig:
     relative_volume_window: int = 5
     volume_window: int = 10
     normalize: bool = True
+    use_cross_sectional: bool = True
 
 
 @dataclass(slots=True)
@@ -81,13 +87,25 @@ class TrainingConfig:
     checkpoint_dir: str = "models/checkpoints"
     log_path: str = "models/logs/training_log.json"
     metrics_path: str = "models/logs/metrics.json"
+    direction_loss_weight: float = 0.0
+    threshold_loss_weight: float = 0.8
+    regression_loss_weight: float = 0.2
+    rank_loss_weight: float = 0.0
+    regime_loss_weight: float = 0.0
+    regression_loss: str = "huber"
+    regression_huber_delta: float = 1.0
 
 
 @dataclass(slots=True)
 class BacktestConfig:
-    long_threshold: float = 0.55
-    short_threshold: float = 0.45
+    long_threshold: float = 0.60
+    short_threshold: float = 0.40
     periods_per_year: int = 252 * 78
+    execution_lag_bars: int = 1
+    confidence_threshold: float = 0.60
+    top_percentile: float | None = None
+    confidence_threshold_sweep: tuple[float, ...] = (0.55, 0.60, 0.65, 0.70)
+    confidence_top_percent_sweep: tuple[float, ...] = (0.05, 0.10, 0.20)
     split_mode: str = "global_time"
     flip_positions: bool = False
     include_costs: bool = True

@@ -10,7 +10,27 @@ if TYPE_CHECKING:
     import numpy as np
 
 
-RESERVED_COLUMNS = {"timestamp", "ticker", "label", "close", "next_close"}
+RESERVED_COLUMNS = {
+    "timestamp",
+    "ticker",
+    "label",
+    "close",
+    "next_close",
+    "next_log_return",
+    "vol_target",
+    "vol_target_clipped",
+    "vol_threshold",
+    "z_return",
+    "threshold_up",
+    "threshold_down",
+    "threshold_no_move",
+    "threshold_label",
+    "vol_direction_up",
+    "vol_direction_down",
+    "vol_direction_neutral",
+    "vol_direction_label",
+    "cross_sectional_rank",
+}
 
 
 @dataclass(slots=True)

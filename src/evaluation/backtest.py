@@ -23,6 +23,9 @@ class BacktestReport:
     nan_signal_count: int = 0
     cost_bps_per_trade: float = 0.0
     slippage_bps: float = 0.0
+    confidence_threshold: float | None = None
+    top_percentile: float | None = None
+    selected_bars: int = 0
     equity_curve: list[float] | None = None
 
     def to_dict(self) -> dict[str, float | int]:
@@ -38,25 +41,54 @@ def _std(values: list[float]) -> float:
 
 
 def run_backtest(
-    probabilities: list[float],
+    probabilities: list[float] | None,
     close: list[float],
     next_close: list[float],
     *,
+    up_probabilities: list[float] | None = None,
+    down_probabilities: list[float] | None = None,
     long_threshold: float = 0.55,
     short_threshold: float = 0.45,
+    confidence_threshold: float | None = None,
+    top_percentile: float | None = None,
     periods_per_year: int = 252 * 78,
+    execution_lag_bars: int = 1,
     flip_positions: bool = False,
     cost_bps_per_trade: float = 0.0,
     slippage_bps: float = 0.0,
 ) -> BacktestReport:
     """Run a threshold-based long/short strategy."""
-    if not (len(probabilities) == len(close) == len(next_close)):
-        raise ValueError("probabilities, close, and next_close must have equal lengths")
-    if not probabilities:
-        raise ValueError("Cannot backtest empty arrays")
-    if short_threshold >= long_threshold:
-        raise ValueError("short_threshold must be < long_threshold")
+    if probabilities is None and (up_probabilities is None or down_probabilities is None):
+        raise ValueError("Provide either probabilities or both up_probabilities/down_probabilities")
 
+    if up_probabilities is None or down_probabilities is None:
+        resolved_probabilities = probabilities or []
+        up_probabilities = [float(value) for value in resolved_probabilities]
+        down_probabilities = [1.0 - float(value) for value in resolved_probabilities]
+    else:
+        up_probabilities = [float(value) for value in up_probabilities]
+        down_probabilities = [float(value) for value in down_probabilities]
+
+    if not (len(up_probabilities) == len(down_probabilities) == len(close) == len(next_close)):
+        raise ValueError("probability and price arrays must have equal lengths")
+    if not up_probabilities:
+        raise ValueError("Cannot backtest empty arrays")
+    if confidence_threshold is None and short_threshold >= long_threshold:
+        raise ValueError("short_threshold must be < long_threshold when confidence_threshold is not set")
+    lag_bars = int(execution_lag_bars)
+    if lag_bars < 0:
+        raise ValueError("execution_lag_bars must be >= 0")
+    if top_percentile is not None and not (0.0 < float(top_percentile) <= 1.0):
+        raise ValueError("top_percentile must be in (0, 1]")
+
+    confidence_scores = [max(float(up), float(down)) for up, down in zip(up_probabilities, down_probabilities)]
+    selected_indices = set(range(len(up_probabilities)))
+    if top_percentile is not None:
+        keep_count = max(1, int(len(up_probabilities) * float(top_percentile)))
+        ranked_indices = sorted(range(len(up_probabilities)), key=lambda index: confidence_scores[index], reverse=True)
+        selected_indices = set(ranked_indices[:keep_count])
+
+    signal_positions: list[int] = []
     positions: list[int] = []
     gross_returns: list[float] = []
     net_returns: list[float] = []
@@ -69,18 +101,34 @@ def run_backtest(
     transaction_cost_pnl = 0.0
     slippage_pnl = 0.0
 
-    for probability, current_close, future_close in zip(probabilities, close, next_close):
+    for index, (up_probability, down_probability) in enumerate(zip(up_probabilities, down_probabilities)):
         raw_position = 0
-        if not math.isfinite(float(probability)):
-            nan_signal_count += 1
-        elif probability >= long_threshold:
-            raw_position = 1
-        elif probability <= short_threshold:
-            raw_position = -1
-        else:
+        if index not in selected_indices:
             raw_position = 0
+        elif not math.isfinite(float(up_probability)) or not math.isfinite(float(down_probability)):
+            nan_signal_count += 1
+        else:
+            if confidence_threshold is not None:
+                if up_probability >= float(confidence_threshold) and up_probability > down_probability:
+                    raw_position = 1
+                elif down_probability >= float(confidence_threshold) and down_probability > up_probability:
+                    raw_position = -1
+            else:
+                if up_probability >= long_threshold and up_probability > down_probability:
+                    raw_position = 1
+                elif down_probability >= short_threshold and down_probability > up_probability:
+                    raw_position = -1
 
         position = -raw_position if flip_positions else raw_position
+        signal_positions.append(position)
+
+    executed_positions = [0] * len(signal_positions)
+    for index, position in enumerate(signal_positions):
+        execution_index = index + lag_bars
+        if execution_index < len(executed_positions):
+            executed_positions[execution_index] = position
+
+    for position, current_close, future_close in zip(executed_positions, close, next_close):
         if position > 0:
             long_count += 1
         elif position < 0:
@@ -149,5 +197,8 @@ def run_backtest(
         nan_signal_count=nan_signal_count,
         cost_bps_per_trade=float(cost_bps_per_trade),
         slippage_bps=float(slippage_bps),
+        confidence_threshold=float(confidence_threshold) if confidence_threshold is not None else None,
+        top_percentile=float(top_percentile) if top_percentile is not None else None,
+        selected_bars=len(selected_indices),
         equity_curve=equity_curve,
     )

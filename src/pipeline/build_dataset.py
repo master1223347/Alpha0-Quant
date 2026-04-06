@@ -89,10 +89,31 @@ def _resolve_panel_context_size(config: ExperimentConfig) -> int:
 
 
 def _resolve_return_target_key(config: ExperimentConfig) -> str:
-    preferred = str(config.targets.primary_target).strip()
-    if preferred in {"next_log_return", "vol_target", "z_return", "cross_sectional_rank"}:
+    preferred = str(getattr(config.targets, "return_target", "")).strip()
+    if preferred in {"next_log_return", "vol_target", "vol_target_clipped", "z_return", "cross_sectional_rank"}:
         return preferred
+    preferred = str(config.targets.primary_target).strip()
+    if preferred in {"next_log_return", "vol_target", "vol_target_clipped", "z_return", "cross_sectional_rank"}:
+        return preferred
+    if preferred == "vol_direction_label":
+        return "vol_target_clipped"
     return "next_log_return"
+
+
+def _resolve_threshold_target_key(config: ExperimentConfig) -> str:
+    preferred = str(getattr(config.targets, "threshold_target", "")).strip()
+    if preferred:
+        return preferred
+    if str(config.targets.primary_target).strip() == "vol_direction_label":
+        return "vol_direction_label"
+    return "threshold_label"
+
+
+def _resolve_direction_target_key(config: ExperimentConfig) -> str:
+    preferred = str(getattr(config.targets, "direction_target", "")).strip()
+    if preferred:
+        return preferred
+    return "label"
 
 
 def _flatten_rows(ticker_sequences: dict[str, list[list[dict[str, Any]]]]) -> list[dict[str, Any]]:
@@ -223,6 +244,8 @@ def build_dataset(
         threshold=float(config.targets.threshold),
         volatility_window=int(config.targets.volatility_window),
         zscore_window=int(config.targets.zscore_window),
+        volatility_label_k=float(getattr(config.targets, "volatility_label_k", 0.25)),
+        regression_clip=float(getattr(config.targets, "regression_clip", 3.0)),
     )
     assign_cross_sectional_rank(labeled_sequences, target_column="next_log_return")
 
@@ -255,6 +278,8 @@ def build_dataset(
         panel_context_size = config.dataset.window_size
 
     return_target_key = _resolve_return_target_key(config)
+    direction_target_key = _resolve_direction_target_key(config)
+    threshold_target_key = _resolve_threshold_target_key(config)
     datasets: dict[str, WindowDatasetArtifacts | PanelDatasetArtifacts] = {}
     split_row_counts: dict[str, int] = {}
     for split_name, ticker_sequences in split_sequences.items():
@@ -266,6 +291,8 @@ def build_dataset(
                 feature_columns=feature_artifacts.feature_columns,
                 label_key=config.targets.primary_target,
                 return_key=return_target_key,
+                direction_key=direction_target_key,
+                threshold_key=threshold_target_key,
             )
         else:
             datasets[split_name] = build_labeled_windows(
@@ -275,6 +302,8 @@ def build_dataset(
                 feature_columns=feature_artifacts.feature_columns,
                 label_key=config.targets.primary_target,
                 return_key=return_target_key,
+                direction_key=direction_target_key,
+                threshold_key=threshold_target_key,
             )
 
     all_rows = []

@@ -1,0 +1,25 @@
+Alpha0 Quant - Volatility Filter + Confidence Filter Sweep
+
+Runs: k in {0.15, 0.25, 0.35}, seeds in {7, 42}, model=panel_transformer
+Objective: 3-class vol_direction_label + Huber(vol_target_clipped) with 0.8/0.2 loss weighting
+
+Per run (best confidence bucket by Sharpe):
+- k=0.15, seed=7: dir_acc=0.4587, auc=0.5619, base_sharpe=0.000, base_trades=0, best_bucket(top=0.10) hit_rate=0.5385, sharpe=4.076, trades=16, best_threshold=0.55, threshold_sharpe=0.000
+- k=0.15, seed=42: dir_acc=0.4358, auc=0.4473, base_sharpe=-22.035, base_trades=26, best_bucket(top=0.05) hit_rate=0.3846, sharpe=-6.820, trades=10, best_threshold=0.65, threshold_sharpe=0.000
+- k=0.25, seed=7: dir_acc=0.4729, auc=0.5350, base_sharpe=0.000, base_trades=0, best_bucket(top=0.10) hit_rate=0.4615, sharpe=-6.794, trades=18, best_threshold=0.60, threshold_sharpe=0.000
+- k=0.25, seed=42: dir_acc=0.4286, auc=0.4592, base_sharpe=0.000, base_trades=0, best_bucket(top=0.05) hit_rate=0.3846, sharpe=-0.774, trades=6, best_threshold=0.60, threshold_sharpe=0.000
+- k=0.35, seed=7: dir_acc=0.5319, auc=0.5324, base_sharpe=0.000, base_trades=0, best_bucket(top=0.20) hit_rate=0.5577, sharpe=1.788, trades=24, best_threshold=0.55, threshold_sharpe=0.000
+- k=0.35, seed=42: dir_acc=0.4309, auc=0.5016, base_sharpe=0.000, base_trades=0, best_bucket(top=0.05) hit_rate=0.3077, sharpe=-5.605, trades=4, best_threshold=0.55, threshold_sharpe=0.000
+
+Aggregate by k:
+- k=0.15: dir_acc_mean=0.4472, auc_mean=0.5046, base_sharpe_mean=-11.018, base_trade_mean=13.0, best_bucket_hit_rate_mean=0.4615, best_bucket_sharpe_mean=-1.372, best_bucket_trade_mean=13.0
+- k=0.25: dir_acc_mean=0.4507, auc_mean=0.4971, base_sharpe_mean=0.000, base_trade_mean=0.0, best_bucket_hit_rate_mean=0.4231, best_bucket_sharpe_mean=-3.784, best_bucket_trade_mean=12.0
+- k=0.35: dir_acc_mean=0.4814, auc_mean=0.5170, base_sharpe_mean=0.000, base_trade_mean=0.0, best_bucket_hit_rate_mean=0.4327, best_bucket_sharpe_mean=-1.909, best_bucket_trade_mean=14.0
+
+Best overall (by confidence-bucket Sharpe):
+- k=0.15, seed=7
+- directional_accuracy_non_neutral=0.4587
+- best_bucket_top_percentile=0.10
+- best_bucket_hit_rate=0.5385
+- best_bucket_sharpe_after_costs=4.076
+- best_bucket_trade_count=16

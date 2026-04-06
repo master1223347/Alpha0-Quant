@@ -1,0 +1,25 @@
+Tiny Ablation Sweep (3 configs x 3 seeds)
+Seeds: [7, 42, 99]
+
+[baseline_features_only]
+  pnl mean=-0.003338 std=0.002140; sharpe mean=-7.617 std=6.936; trade_count mean=4.7 std=4.0; test_auc mean=0.4522
+  - seed=7 pnl=-0.004342 sharpe=-15.033 trade_count=9 test_auc=0.4261
+  - seed=42 pnl=-0.000881 sharpe=-1.289 trade_count=4 test_auc=0.4978
+  - seed=99 pnl=-0.004791 sharpe=-6.528 trade_count=1 test_auc=0.4326
+  equity_plot=/Users/abhi/Desktop/Alpha0 Quant/models/logs/tiny_ablation/baseline_features_only/equity_multi_seed.svg
+
+[baseline_plus_vol_target]
+  pnl mean=-0.000640 std=0.012419; sharpe mean=-0.680 std=24.524; trade_count mean=7.0 std=0.0; test_auc mean=0.5058
+  - seed=7 pnl=0.013700 sharpe=27.548 trade_count=7 test_auc=0.5696
+  - seed=42 pnl=-0.007658 sharpe=-16.747 trade_count=7 test_auc=0.4739
+  - seed=99 pnl=-0.007961 sharpe=-12.840 trade_count=7 test_auc=0.4739
+  equity_plot=/Users/abhi/Desktop/Alpha0 Quant/models/logs/tiny_ablation/baseline_plus_vol_target/equity_multi_seed.svg
+
+[baseline_plus_cross_sectional_rank]
+  pnl mean=0.002713 std=0.005994; sharpe mean=4.233 std=10.981; trade_count mean=4.3 std=2.9; test_auc mean=0.4797
+  - seed=7 pnl=0.004491 sharpe=6.118 trade_count=1 test_auc=0.5043
+  - seed=42 pnl=-0.003970 sharpe=-7.569 trade_count=6 test_auc=0.4587
+  - seed=99 pnl=0.007616 sharpe=14.149 trade_count=6 test_auc=0.4761
+  equity_plot=/Users/abhi/Desktop/Alpha0 Quant/models/logs/tiny_ablation/baseline_plus_cross_sectional_rank/equity_multi_seed.svg
+
+summary_json=/Users/abhi/Desktop/Alpha0 Quant/models/logs/tiny_ablation/summary.json

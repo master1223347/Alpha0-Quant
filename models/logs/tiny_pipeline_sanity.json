@@ -1,0 +1,151 @@
+{
+  "generated_at": "2026-04-06T00:48:00Z",
+  "summary": {
+    "checks_total": 7,
+    "checks_passed": 7,
+    "checks_failed": 0,
+    "all_passed": true
+  },
+  "checks": [
+    {
+      "name": "label_alignment",
+      "passed": true,
+      "details": {
+        "rows_checked": 4,
+        "mismatches": []
+      }
+    },
+    {
+      "name": "normalization_train_only_fit",
+      "passed": true,
+      "details": {
+        "expected_train_means": {
+          "candle_body": 0.001855555555555581,
+          "candle_range": 0.022007444444444472,
+          "log_return": 0.0018521968335596358,
+          "lower_wick": 0.00999933333333334,
+          "relative_volume": 1.0327506729453315,
+          "rolling_volatility": 0.001734961701012239,
+          "short_term_momentum": 0.005362802949777867,
+          "upper_wick": 0.010019222222222235
+        },
+        "normalizer_means": {
+          "candle_body": 0.001855555555555581,
+          "candle_range": 0.022007444444444472,
+          "log_return": 0.0018521968335596358,
+          "lower_wick": 0.00999933333333334,
+          "relative_volume": 1.0327506729453315,
+          "rolling_volatility": 0.001734961701012239,
+          "short_term_momentum": 0.005362802949777867,
+          "upper_wick": 0.010019222222222235
+        }
+      }
+    },
+    {
+      "name": "normalization_train_moments",
+      "passed": true,
+      "details": {
+        "train_means": {
+          "candle_body": -5.551115123125783e-17,
+          "candle_range": -9.12850042469573e-16,
+          "log_return": -8.018277400070575e-17,
+          "lower_wick": 2.465681979578625e-13,
+          "relative_volume": 2.285209059020114e-14,
+          "rolling_volatility": 8.059139775282474e-14,
+          "short_term_momentum": 5.396917480816733e-18,
+          "upper_wick": -3.331902655013942e-14
+        }
+      }
+    },
+    {
+      "name": "global_time_no_overlap",
+      "passed": true,
+      "details": {
+        "overlap_counts": {
+          "train_val": 0,
+          "train_test": 0,
+          "val_test": 0
+        }
+      }
+    },
+    {
+      "name": "base_features_prefix_invariance",
+      "passed": true,
+      "details": {
+        "comparisons": [
+          {
+            "prefix_length": 8,
+            "feature_count": 3,
+            "matched": true
+          },
+          {
+            "prefix_length": 12,
+            "feature_count": 7,
+            "matched": true
+          },
+          {
+            "prefix_length": 18,
+            "feature_count": 13,
+            "matched": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "volume_features_prefix_invariance",
+      "passed": true,
+      "details": {
+        "comparisons": [
+          {
+            "prefix_length": 8,
+            "feature_count": 3,
+            "matched": true
+          },
+          {
+            "prefix_length": 12,
+            "feature_count": 7,
+            "matched": true
+          },
+          {
+            "prefix_length": 18,
+            "feature_count": 13,
+            "matched": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "backtest_execution_lag",
+      "passed": true,
+      "details": {
+        "expected_positions": [
+          0,
+          0,
+          1,
+          -1,
+          1
+        ],
+        "expected_gross_pnl": 0.7,
+        "expected_trade_count": 3,
+        "expected_transaction_cost_pnl": -0.0125,
+        "expected_slippage_pnl": -0.0075,
+        "expected_pnl": 0.68,
+        "actual": {
+          "pnl": 0.6799999999999999,
+          "gross_pnl": 0.7,
+          "trade_count": 3,
+          "transaction_cost_pnl": -0.0125,
+          "slippage_pnl": -0.007500000000000001,
+          "equity_curve": [
+            1.0,
+            1.0,
+            1.0,
+            1.196,
+            1.4256319999999998,
+            1.8419165439999998
+          ]
+        }
+      }
+    }
+  ]
+}

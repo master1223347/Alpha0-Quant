@@ -10,12 +10,18 @@ from typing import Any, Sequence
 TARGET_COLUMNS = (
     "next_log_return",
     "vol_target",
+    "vol_target_clipped",
+    "vol_threshold",
     "z_return",
     "label",
     "threshold_up",
     "threshold_down",
     "threshold_no_move",
     "threshold_label",
+    "vol_direction_up",
+    "vol_direction_down",
+    "vol_direction_neutral",
+    "vol_direction_label",
     "cross_sectional_rank",
 )
 
@@ -47,6 +53,8 @@ def label_sequence(
     threshold: float = 0.001,
     volatility_window: int = 20,
     zscore_window: int = 20,
+    volatility_label_k: float = 0.25,
+    regression_clip: float = 3.0,
     epsilon: float = 1e-8,
 ) -> list[dict[str, Any]]:
     """Attach forward-return targets to a single feature sequence."""
@@ -58,6 +66,10 @@ def label_sequence(
         raise ValueError("volatility_window must be > 0")
     if zscore_window <= 0:
         raise ValueError("zscore_window must be > 0")
+    if volatility_label_k < 0:
+        raise ValueError("volatility_label_k must be >= 0")
+    if regression_clip <= 0:
+        raise ValueError("regression_clip must be > 0")
 
     if len(sequence) <= horizon:
         return []
@@ -78,6 +90,7 @@ def label_sequence(
         next_log_return = math.log(next_close / current_close)
         volatility_values = _trailing_values(sequence, index, volatility_window, "log_return")
         _, vol_std = _mean_and_std(volatility_values)
+        vol_threshold = float(volatility_label_k) * max(vol_std, epsilon)
 
         z_values = _trailing_values(sequence, index, zscore_window, "log_return")
         z_mean, z_std = _mean_and_std(z_values)
@@ -98,15 +111,37 @@ def label_sequence(
             threshold_down = 0
             threshold_no_move = 1
 
+        if next_log_return > vol_threshold:
+            vol_direction_label = 2
+            vol_direction_up = 1
+            vol_direction_down = 0
+            vol_direction_neutral = 0
+        elif next_log_return < -vol_threshold:
+            vol_direction_label = 0
+            vol_direction_up = 0
+            vol_direction_down = 1
+            vol_direction_neutral = 0
+        else:
+            vol_direction_label = 1
+            vol_direction_up = 0
+            vol_direction_down = 0
+            vol_direction_neutral = 1
+
         current["next_close"] = next_close
         current["next_log_return"] = next_log_return
         current["vol_target"] = next_log_return / max(vol_std, epsilon)
+        current["vol_target_clipped"] = max(min(current["vol_target"], float(regression_clip)), -float(regression_clip))
+        current["vol_threshold"] = vol_threshold
         current["z_return"] = (next_log_return - z_mean) / max(z_std, epsilon)
         current["label"] = 1 if next_log_return > 0 else 0
         current["threshold_up"] = threshold_up
         current["threshold_down"] = threshold_down
         current["threshold_no_move"] = threshold_no_move
         current["threshold_label"] = threshold_label
+        current["vol_direction_up"] = vol_direction_up
+        current["vol_direction_down"] = vol_direction_down
+        current["vol_direction_neutral"] = vol_direction_neutral
+        current["vol_direction_label"] = vol_direction_label
         current["cross_sectional_rank"] = 0.0
         labeled.append(current)
 
@@ -120,6 +155,8 @@ def label_ticker_sequences(
     threshold: float = 0.001,
     volatility_window: int = 20,
     zscore_window: int = 20,
+    volatility_label_k: float = 0.25,
+    regression_clip: float = 3.0,
     epsilon: float = 1e-8,
 ) -> dict[str, list[list[dict[str, Any]]]]:
     """Label all sequences for each ticker without mutating the input mapping."""
@@ -133,6 +170,8 @@ def label_ticker_sequences(
                 threshold=threshold,
                 volatility_window=volatility_window,
                 zscore_window=zscore_window,
+                volatility_label_k=volatility_label_k,
+                regression_clip=regression_clip,
                 epsilon=epsilon,
             )
             if labeled_sequence:

@@ -72,7 +72,17 @@ def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> Trainin
     if _is_binary_labels(raw_labels):
         labels = [int(round(value)) for value in raw_labels]
         pos_weight = compute_pos_weight(labels)
-    loss_fn = build_model_loss(model, pos_weight=pos_weight).to(device)
+    loss_fn = build_model_loss(
+        model,
+        pos_weight=pos_weight,
+        direction_weight=float(getattr(config.training, "direction_loss_weight", 1.0)),
+        threshold_weight=float(getattr(config.training, "threshold_loss_weight", 0.25)),
+        regression_weight=float(getattr(config.training, "regression_loss_weight", 1.0)),
+        rank_weight=float(getattr(config.training, "rank_loss_weight", 0.10)),
+        regime_weight=float(getattr(config.training, "regime_loss_weight", 0.10)),
+        regression_loss=str(getattr(config.training, "regression_loss", "nll")),
+        regression_huber_delta=float(getattr(config.training, "regression_huber_delta", 1.0)),
+    ).to(device)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),

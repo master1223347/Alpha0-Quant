@@ -245,6 +245,8 @@ if nn is not None:
             regime_weight: float = 0.10,
             neutral_band: float = 0.0005,
             student_t_df: float = 3.0,
+            regression_loss: str = "nll",
+            regression_huber_delta: float = 1.0,
         ) -> None:
             super().__init__()
             self.direction_weight = float(direction_weight)
@@ -255,6 +257,8 @@ if nn is not None:
             self.neutral_band = float(neutral_band)
             self.distribution = distribution.lower().strip()
             self.student_t_df = float(student_t_df)
+            self.regression_loss = str(regression_loss).lower().strip()
+            self.regression_huber_delta = float(regression_huber_delta)
 
             if pos_weight is None:
                 self.pos_weight = None
@@ -302,12 +306,28 @@ if nn is not None:
 
             mean_return = extract_mean_return(outputs)
             log_scale = extract_log_scale(outputs)
-            if forward_return is not None and mean_return is not None and log_scale is not None:
+            if forward_return is not None and mean_return is not None:
                 mean_return = mean_return.reshape(-1)
-                log_scale = log_scale.reshape(-1)
-                dist_loss = self._distribution_loss(forward_return.reshape(-1), mean_return, log_scale).mean()
-                total = total + self.regression_weight * dist_loss
-                components[f"{self.distribution}_nll"] = float(dist_loss.detach().cpu().item())
+                regression_target = forward_return.reshape(-1)
+                if self.regression_loss == "huber":
+                    try:
+                        reg_loss = F.smooth_l1_loss(
+                            mean_return,
+                            regression_target,
+                            beta=self.regression_huber_delta,
+                        )
+                    except TypeError:
+                        reg_loss = F.smooth_l1_loss(mean_return, regression_target)
+                    components["huber_loss"] = float(reg_loss.detach().cpu().item())
+                else:
+                    if log_scale is None:
+                        reg_loss = F.mse_loss(mean_return, regression_target)
+                        components["mse_loss"] = float(reg_loss.detach().cpu().item())
+                    else:
+                        log_scale = log_scale.reshape(-1)
+                        reg_loss = self._distribution_loss(regression_target, mean_return, log_scale).mean()
+                        components[f"{self.distribution}_nll"] = float(reg_loss.detach().cpu().item())
+                total = total + self.regression_weight * reg_loss
 
             threshold_logits = extract_threshold_logits(outputs)
             if threshold_logits is not None:
@@ -355,6 +375,8 @@ def build_model_loss(
     regime_weight: float = 0.10,
     neutral_band: float = 0.0005,
     student_t_df: float = 3.0,
+    regression_loss: str = "nll",
+    regression_huber_delta: float = 1.0,
 ) -> Any:
     if nn is None:
         raise ModuleNotFoundError("torch is required to build losses")
@@ -372,5 +394,7 @@ def build_model_loss(
             regime_weight=regime_weight,
             neutral_band=neutral_band,
             student_t_df=student_t_df,
+            regression_loss=regression_loss,
+            regression_huber_delta=regression_huber_delta,
         )
     return DirectionOnlyLoss(pos_weight=pos_weight)

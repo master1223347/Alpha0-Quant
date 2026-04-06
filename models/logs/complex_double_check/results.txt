@@ -1,0 +1,35 @@
+Alpha0 Quant - Complex Model Double Check (Tiny Subset)
+Command: custom python runner using experiments/baseline_plus_cross_sectional_rank.yaml
+Models: panel_transformer, tcn_encoder, gnn_panel
+Seeds: [7, 42, 99]
+
+Model: panel_transformer
+- val_auc mean/std: nan / nan
+- test_auc mean/std: 0.496377 / 0.030244
+- test_accuracy mean/std: 0.503876 / 0.047786
+- pnl mean/std: 0.003021 / 0.007575
+- sharpe mean/std: 5.437631 / 15.807126
+- trade_count mean/std: 7.333 / 1.247
+- avg_pred_return mean/std: 0.296668 / 0.442419
+- avg_actual_return mean/std: 0.192465 / 0.217460
+
+Model: tcn_encoder
+- val_auc mean/std: nan / nan
+- test_auc mean/std: 0.471739 / 0.066509
+- test_accuracy mean/std: 0.534884 / 0.000000
+- pnl mean/std: 0.000000 / 0.000000
+- sharpe mean/std: 0.000000 / 0.000000
+- trade_count mean/std: 0.000 / 0.000
+- avg_pred_return mean/std: -0.027170 / 0.033811
+- avg_actual_return mean/std: 0.192465 / 0.217460
+
+Model: gnn_panel
+- val_auc mean/std: nan / nan
+- test_auc mean/std: 0.492029 / 0.047507
+- test_accuracy mean/std: 0.519380 / 0.029005
+- pnl mean/std: -0.014624 / 0.005482
+- sharpe mean/std: -22.769976 / 9.487608
+- trade_count mean/std: 17.333 / 7.364
+- avg_pred_return mean/std: 0.203700 / 0.216451
+- avg_actual_return mean/std: 0.192465 / 0.217460
+
