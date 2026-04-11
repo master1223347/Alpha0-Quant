@@ -28,6 +28,7 @@ class ValidationResult:
     down_probabilities: list[float]
     neutral_probabilities: list[float]
     confidence_scores: list[float]
+    action_scores: list[float]
     three_class_labels: list[int]
     close: list[float]
     next_close: list[float]
@@ -81,6 +82,7 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
     down_probabilities: list[float] = []
     neutral_probabilities: list[float] = []
     confidence_scores: list[float] = []
+    action_scores: list[float] = []
     close_values: list[float] = []
     next_close_values: list[float] = []
     forward_returns: list[float] = []
@@ -161,6 +163,27 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
         neutral_probabilities = [0.0 for _ in probabilities]
         confidence_scores = [max(up_probability, down_probability) for up_probability, down_probability in zip(up_probabilities, down_probabilities)]
 
+    if mean_returns and sigma_values and len(mean_returns) == len(sigma_values) == len(logits_list):
+        floor = 0.10
+        raw_scores = []
+        for mu_value, sigma_value, logit_value in zip(mean_returns, sigma_values, logits_list):
+            direction_sign = 1.0 if float(logit_value) >= 0.0 else -1.0
+            safe_sigma = max(float(sigma_value), floor)
+            raw_scores.append(direction_sign * (float(mu_value) / safe_sigma))
+    elif probabilities:
+        raw_scores = [(float(probability) - 0.5) * 2.0 for probability in probabilities]
+    else:
+        raw_scores = [0.0 for _ in logits_list]
+
+    if raw_scores:
+        mean_score = sum(raw_scores) / len(raw_scores)
+        variance = sum((value - mean_score) ** 2 for value in raw_scores) / len(raw_scores)
+        std_score = math.sqrt(variance)
+        if std_score > 1e-8:
+            action_scores = [(value - mean_score) / std_score for value in raw_scores]
+        else:
+            action_scores = [0.0 for _ in raw_scores]
+
     if three_class_labels and len(three_class_labels) == len(probabilities):
         directional_indices = [index for index, label in enumerate(three_class_labels) if label != 1]
         directional_labels = [1 if three_class_labels[index] == 2 else 0 for index in directional_indices]
@@ -196,6 +219,7 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
         down_probabilities=down_probabilities,
         neutral_probabilities=neutral_probabilities,
         confidence_scores=confidence_scores,
+        action_scores=action_scores,
         three_class_labels=three_class_labels,
         close=close_values,
         next_close=next_close_values,

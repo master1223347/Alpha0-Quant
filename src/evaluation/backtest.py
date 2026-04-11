@@ -25,6 +25,8 @@ class BacktestReport:
     slippage_bps: float = 0.0
     confidence_threshold: float | None = None
     top_percentile: float | None = None
+    selection_mode: str | None = None
+    long_short_percentile: float | None = None
     selected_bars: int = 0
     equity_curve: list[float] | None = None
 
@@ -51,6 +53,8 @@ def run_backtest(
     short_threshold: float = 0.45,
     confidence_threshold: float | None = None,
     top_percentile: float | None = None,
+    selection_mode: str | None = None,
+    long_short_percentile: float | None = None,
     periods_per_year: int = 252 * 78,
     execution_lag_bars: int = 1,
     flip_positions: bool = False,
@@ -87,6 +91,8 @@ def run_backtest(
         raise ValueError("execution_lag_bars must be >= 0")
     if top_percentile is not None and not (0.0 < float(top_percentile) <= 1.0):
         raise ValueError("top_percentile must be in (0, 1]")
+    if long_short_percentile is not None and not (0.0 < float(long_short_percentile) <= 0.5):
+        raise ValueError("long_short_percentile must be in (0, 0.5]")
 
     confidence_scores = [max(float(up), float(down)) for up, down in zip(up_probabilities, down_probabilities)]
     blended_scores = signal_scores
@@ -118,10 +124,33 @@ def run_backtest(
             blended_scores = directional_confidence
     if blended_scores is not None and len(blended_scores) != len(up_probabilities):
         blended_scores = None
+
+    if blended_scores is None:
+        scores_for_selection = [float(up - down) for up, down in zip(up_probabilities, down_probabilities)]
+    else:
+        scores_for_selection = [float(value) for value in blended_scores]
+
+    selection = str(selection_mode or "global_abs").strip().lower()
+    long_indices: set[int] = set()
+    short_indices: set[int] = set()
     selected_indices = set(range(len(up_probabilities)))
-    if top_percentile is not None:
+    if selection == "separate_long_short" and long_short_percentile is not None:
+        keep_count = max(1, int(len(up_probabilities) * float(long_short_percentile)))
+        ranked_long = sorted(range(len(up_probabilities)), key=lambda index: scores_for_selection[index], reverse=True)
+        ranked_short = sorted(range(len(up_probabilities)), key=lambda index: scores_for_selection[index])
+        long_indices = set(ranked_long[:keep_count])
+        short_indices = set(ranked_short[:keep_count])
+        selected_indices = long_indices | short_indices
+    elif top_percentile is not None:
         keep_count = max(1, int(len(up_probabilities) * float(top_percentile)))
-        ranked_indices = sorted(range(len(up_probabilities)), key=lambda index: confidence_scores[index], reverse=True)
+        if selection == "global_abs":
+            ranked_indices = sorted(
+                range(len(up_probabilities)),
+                key=lambda index: abs(scores_for_selection[index]),
+                reverse=True,
+            )
+        else:
+            ranked_indices = sorted(range(len(up_probabilities)), key=lambda index: confidence_scores[index], reverse=True)
         selected_indices = set(ranked_indices[:keep_count])
 
     signal_positions: list[int] = []
@@ -143,19 +172,25 @@ def run_backtest(
             raw_position = 0
         elif not math.isfinite(float(up_probability)) or not math.isfinite(float(down_probability)):
             nan_signal_count += 1
+        elif selection == "separate_long_short" and long_short_percentile is not None:
+            if index in long_indices and index in short_indices:
+                raw_position = 1 if scores_for_selection[index] >= 0 else -1
+            elif index in long_indices:
+                raw_position = 1
+            elif index in short_indices:
+                raw_position = -1
         else:
-            score = float(blended_scores[index]) if blended_scores is not None else float(up_probability - down_probability)
+            score = float(scores_for_selection[index])
             if confidence_threshold is not None:
                 if up_probability >= float(confidence_threshold) and up_probability > down_probability:
                     raw_position = 1
                 elif down_probability >= float(confidence_threshold) and down_probability > up_probability:
                     raw_position = -1
             else:
-                if blended_scores is not None:
-                    if score > 0:
-                        raw_position = 1
-                    elif score < 0:
-                        raw_position = -1
+                if score > 0:
+                    raw_position = 1
+                elif score < 0:
+                    raw_position = -1
                 elif up_probability >= long_threshold and up_probability > down_probability:
                     raw_position = 1
                 elif down_probability >= short_threshold and down_probability > up_probability:
@@ -245,6 +280,8 @@ def run_backtest(
         slippage_bps=float(slippage_bps),
         confidence_threshold=float(confidence_threshold) if confidence_threshold is not None else None,
         top_percentile=float(top_percentile) if top_percentile is not None else None,
+        selection_mode=selection,
+        long_short_percentile=float(long_short_percentile) if long_short_percentile is not None else None,
         selected_bars=len(selected_indices),
         equity_curve=equity_curve,
     )

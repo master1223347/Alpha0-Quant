@@ -164,9 +164,6 @@ Other configs available in `experiments/` include:
 - `exp_minn_panel.yaml`
 - `exp_minn_tcn.yaml`
 - `exp_minn_gnn.yaml`
-- `baseline_features_only.yaml`
-- `baseline_plus_vol_target.yaml`
-- `baseline_plus_cross_sectional_rank.yaml`
 
 ## Main Artifacts
 

@@ -1,4 +1,4 @@
-name: minn_panel_transformer
+name: minn_panel_transformer_v1
 
 data:
   raw_root: data/raw
@@ -17,7 +17,12 @@ targets:
   threshold: 0.001
   volatility_window: 20
   zscore_window: 20
-  primary_target: label
+  volatility_label_k: 0.20
+  regression_clip: 3.0
+  primary_target: vol_direction_label
+  direction_target: label
+  threshold_target: vol_direction_label
+  return_target: vol_target_clipped
 
 features:
   momentum_lookback: 3
@@ -25,6 +30,7 @@ features:
   relative_volume_window: 5
   volume_window: 10
   normalize: true
+  use_cross_sectional: true
 
 dataset:
   window_size: 8
@@ -46,38 +52,56 @@ model:
   minn_enabled: true
   multitask_output: true
   probabilistic_output: true
-  include_rank_head: true
-  distribution: gaussian
+  include_rank_head: false
+  include_regime_head: false
+  distribution: student_t
 
 training:
-  epochs: 3
-  learning_rate: 0.001
+  epochs: 8
+  learning_rate: 0.0005
   weight_decay: 0.0001
   scheduler_name: cosine
   scheduler_step_size: 4
   scheduler_gamma: 0.5
   device: auto
   seed: 42
-  checkpoint_dir: models/checkpoints
-  log_path: models/logs/training_log.json
-  metrics_path: models/logs/metrics.json
-  direction_loss_weight: 0.3
-  threshold_loss_weight: 0.5
-  regression_loss_weight: 0.2
+  checkpoint_dir: models/checkpoints/minn_panel
+  log_path: models/logs/minn_panel/training_log.json
+  metrics_path: models/logs/minn_panel/metrics.json
+  direction_loss_weight: 0.45
+  threshold_loss_weight: 0.30
+  regression_loss_weight: 0.20
+  rank_loss_weight: 0.0
+  return_rank_weight: 0.05
+  regime_loss_weight: 0.0
   regression_loss: nll
-  volatility_consistency_weight: 0.02
-  temporal_smoothness_weight: 0.01
-  cross_sectional_reg_weight: 0.01
-  calibration_aux_weight: 0.01
+  student_t_df: 4.0
+  regression_huber_delta: 1.0
+  score_alignment_weight: 0.02
+  score_alignment_floor: 0.10
+  volatility_consistency_weight: 0.0
+  temporal_smoothness_weight: 0.0
+  cross_sectional_reg_weight: 0.0
+  calibration_aux_weight: 0.0
 
 backtest:
-  long_threshold: 0.52
-  short_threshold: 0.48
+  long_threshold: 0.53
+  short_threshold: 0.47
+  confidence_threshold: null
+  top_percentile: null
+  selection_mode: separate_long_short
+  score_source: expected_utility
+  long_short_percentile: 0.10
+  confidence_threshold_sweep: [0.40, 0.45, 0.50, 0.55]
+  confidence_top_percent_sweep: [0.05, 0.10, 0.20, 0.30]
   periods_per_year: 19656
+  execution_lag_bars: 1
   split_mode: global_time
   flip_positions: false
   include_costs: true
   cost_bps_per_trade: 1.0
   slippage_bps: 0.5
   signal_source: confidence_plus_mu
-  require_directional_agreement: true
+  require_directional_agreement: false
+  confidence_mu_agreement_weight: 0.70
+  signal_mu_sigma_floor: 0.10

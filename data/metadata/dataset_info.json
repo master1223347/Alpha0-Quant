@@ -67,8 +67,8 @@
   "stride": 1,
   "dataset_type": "panel",
   "split_mode": "global_time",
-  "primary_target": "label",
-  "return_target": "next_log_return",
+  "primary_target": "vol_direction_label",
+  "return_target": "vol_target_clipped",
   "target_columns": [
     "next_log_return",
     "vol_target",

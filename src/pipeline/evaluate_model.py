@@ -42,6 +42,16 @@ def _safe_probability(up_probability: float, down_probability: float) -> float:
     return float(up_probability / denominator)
 
 
+def _precision_at_k(*, labels: list[int], scores: list[float], top_fraction: float) -> float:
+    if not labels or not scores or len(labels) != len(scores):
+        return float("nan")
+    k = max(1, int(len(scores) * float(top_fraction)))
+    ranked = sorted(range(len(scores)), key=lambda index: abs(scores[index]), reverse=True)
+    selected = ranked[:k]
+    positives = sum(1 for index in selected if labels[index] == 1)
+    return positives / len(selected) if selected else float("nan")
+
+
 def _build_confidence_bucket_summary(
     *,
     validation: Any,
@@ -62,8 +72,12 @@ def _build_confidence_bucket_summary(
         return {"top_percentile": float(top_percentile), "error": "empty validation samples"}
 
     keep_count = max(1, int(sample_count * float(top_percentile)))
-    confidence_scores = [max(float(up), float(down)) for up, down in zip(validation.up_probabilities, validation.down_probabilities)]
-    ranked_indices = sorted(range(sample_count), key=lambda index: confidence_scores[index], reverse=True)
+    if getattr(validation, "action_scores", None):
+        score_values = [float(value) for value in validation.action_scores]
+        ranked_indices = sorted(range(sample_count), key=lambda index: abs(score_values[index]), reverse=True)
+    else:
+        confidence_scores = [max(float(up), float(down)) for up, down in zip(validation.up_probabilities, validation.down_probabilities)]
+        ranked_indices = sorted(range(sample_count), key=lambda index: confidence_scores[index], reverse=True)
     selected_indices = ranked_indices[:keep_count]
 
     y_true: list[int] = []
@@ -82,7 +96,10 @@ def _build_confidence_bucket_summary(
         y_true.append(1 if label == 2 else 0)
         y_prob.append(_safe_probability(up_probability, down_probability))
 
-        direction = 1.0 if up_probability >= down_probability else -1.0
+        if getattr(validation, "action_scores", None):
+            direction = 1.0 if float(validation.action_scores[index]) >= 0.0 else -1.0
+        else:
+            direction = 1.0 if up_probability >= down_probability else -1.0
         close_value = float(validation.close[index])
         next_close_value = float(validation.next_close[index])
         raw_return = (next_close_value - close_value) / close_value if close_value > 0 else 0.0
@@ -104,11 +121,13 @@ def _build_confidence_bucket_summary(
         next_close=validation.next_close,
         confidence_threshold=0.0,
         top_percentile=float(top_percentile),
+        selection_mode="global_abs",
         periods_per_year=periods_per_year,
         execution_lag_bars=int(execution_lag_bars),
         flip_positions=bool(flip_positions),
         cost_bps_per_trade=cost_bps_per_trade,
         slippage_bps=slippage_bps,
+        signal_scores=getattr(validation, "action_scores", None),
     )
 
     average_realized_return = (
@@ -120,6 +139,9 @@ def _build_confidence_bucket_summary(
         "non_neutral_rows": int(non_neutral_count),
         "directional_accuracy": directional_accuracy,
         "directional_precision": directional_precision,
+        "mean_action_score": float(sum(float(validation.action_scores[index]) for index in selected_indices) / len(selected_indices))
+        if getattr(validation, "action_scores", None)
+        else float("nan"),
         "average_realized_return": float(average_realized_return),
         "hit_rate": float(backtest.hit_rate),
         "sharpe_after_costs": float(backtest.sharpe),
@@ -239,10 +261,13 @@ def run_evaluation_pipeline(
         threshold_weight=float(getattr(config.training, "threshold_loss_weight", 0.25)),
         regression_weight=float(getattr(config.training, "regression_loss_weight", 1.0)),
         rank_weight=float(getattr(config.training, "rank_loss_weight", 0.10)),
+        return_rank_weight=float(getattr(config.training, "return_rank_weight", 0.0)),
         regime_weight=float(getattr(config.training, "regime_loss_weight", 0.10)),
         student_t_df=float(getattr(config.training, "student_t_df", 3.0)),
         regression_loss=str(getattr(config.training, "regression_loss", "nll")),
         regression_huber_delta=float(getattr(config.training, "regression_huber_delta", 1.0)),
+        score_alignment_weight=float(getattr(config.training, "score_alignment_weight", 0.0)),
+        score_alignment_floor=float(getattr(config.training, "score_alignment_floor", 0.10)),
         volatility_consistency_weight=float(getattr(config.training, "volatility_consistency_weight", 0.0)),
         volatility_consistency_limit=float(getattr(config.training, "volatility_consistency_limit", 2.5)),
         temporal_smoothness_weight=float(getattr(config.training, "temporal_smoothness_weight", 0.0)),
@@ -257,6 +282,13 @@ def run_evaluation_pipeline(
     slippage_bps = float(getattr(config.backtest, "slippage_bps", 0.0)) if include_costs else 0.0
 
     validation = validate_epoch(model, test_loader, loss_fn, device=device)
+    selection_mode = str(getattr(config.backtest, "selection_mode", "global_abs")).lower().strip()
+    score_source = str(getattr(config.backtest, "score_source", "expected_utility")).lower().strip()
+    long_short_percentile = getattr(config.backtest, "long_short_percentile", None)
+    if score_source == "expected_utility":
+        signal_scores = getattr(validation, "action_scores", None)
+    else:
+        signal_scores = None
     backtest = run_backtest(
         probabilities=validation.probabilities,
         up_probabilities=validation.up_probabilities,
@@ -267,12 +299,15 @@ def run_evaluation_pipeline(
         short_threshold=config.backtest.short_threshold,
         confidence_threshold=getattr(config.backtest, "confidence_threshold", None),
         top_percentile=getattr(config.backtest, "top_percentile", None),
+        selection_mode=selection_mode,
+        long_short_percentile=float(long_short_percentile) if long_short_percentile is not None else None,
         periods_per_year=config.backtest.periods_per_year,
         execution_lag_bars=int(getattr(config.backtest, "execution_lag_bars", 1)),
         flip_positions=bool(getattr(config.backtest, "flip_positions", False)),
         cost_bps_per_trade=cost_bps_per_trade,
         slippage_bps=slippage_bps,
         signal_source=str(getattr(config.backtest, "signal_source", "classification_prob")),
+        signal_scores=signal_scores,
         mu_values=validation.mean_returns,
         sigma_values=validation.sigma_values,
         require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),
@@ -286,6 +321,13 @@ def run_evaluation_pipeline(
         metrics=validation.metrics,
         backtest=backtest,
     )
+
+    if getattr(validation, "action_scores", None):
+        report.metrics["precision_at_k"] = {
+            "top_1%": _precision_at_k(labels=validation.labels, scores=validation.action_scores, top_fraction=0.01),
+            "top_5%": _precision_at_k(labels=validation.labels, scores=validation.action_scores, top_fraction=0.05),
+            "top_10%": _precision_at_k(labels=validation.labels, scores=validation.action_scores, top_fraction=0.10),
+        }
 
     confidence_bucket_sweep = _float_sequence(
         getattr(config.backtest, "confidence_top_percent_sweep", None),
@@ -325,6 +367,13 @@ def run_evaluation_pipeline(
         fallback=(0.55, 0.60, 0.65, 0.70),
     )
     top_percentile = getattr(config.backtest, "top_percentile", None)
+    long_short_percentile = getattr(config.backtest, "long_short_percentile", None)
+    selection_mode = str(getattr(config.backtest, "selection_mode", "global_abs")).lower().strip()
+    score_source = str(getattr(config.backtest, "score_source", "expected_utility")).lower().strip()
+    if score_source == "expected_utility":
+        sweep_signal_scores = getattr(validation, "action_scores", None)
+    else:
+        sweep_signal_scores = None
     report.backtest["confidence_threshold_sweep"] = {
         f"{float(threshold):.2f}": run_backtest(
             probabilities=validation.probabilities,
@@ -334,12 +383,15 @@ def run_evaluation_pipeline(
             next_close=validation.next_close,
             confidence_threshold=float(threshold),
             top_percentile=float(top_percentile) if top_percentile is not None else None,
+            selection_mode=selection_mode,
+            long_short_percentile=float(long_short_percentile) if long_short_percentile is not None else None,
             periods_per_year=int(config.backtest.periods_per_year),
             execution_lag_bars=int(getattr(config.backtest, "execution_lag_bars", 1)),
             flip_positions=bool(getattr(config.backtest, "flip_positions", False)),
             cost_bps_per_trade=cost_bps_per_trade,
             slippage_bps=slippage_bps,
             signal_source=str(getattr(config.backtest, "signal_source", "classification_prob")),
+            signal_scores=sweep_signal_scores,
             mu_values=validation.mean_returns,
             sigma_values=validation.sigma_values,
             require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),

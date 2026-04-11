@@ -102,6 +102,9 @@ class TrainingConfig:
     regression_loss: str = "huber"
     regression_huber_delta: float = 1.0
     student_t_df: float = 3.0
+    return_rank_weight: float = 0.0
+    score_alignment_weight: float = 0.0
+    score_alignment_floor: float = 0.10
     volatility_consistency_weight: float = 0.0
     volatility_consistency_limit: float = 2.5
     temporal_smoothness_weight: float = 0.0
@@ -121,6 +124,9 @@ class BacktestConfig:
     top_percentile: float | None = None
     confidence_threshold_sweep: tuple[float, ...] = (0.55, 0.60, 0.65, 0.70)
     confidence_top_percent_sweep: tuple[float, ...] = (0.05, 0.10, 0.20)
+    selection_mode: str = "global_abs"
+    score_source: str = "expected_utility"
+    long_short_percentile: float | None = None
     split_mode: str = "global_time"
     flip_positions: bool = False
     include_costs: bool = True

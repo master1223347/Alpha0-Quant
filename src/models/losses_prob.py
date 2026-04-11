@@ -336,11 +336,14 @@ if nn is not None:
             regression_weight: float = 1.0,
             threshold_weight: float = 0.25,
             rank_weight: float = 0.10,
+            return_rank_weight: float = 0.0,
             regime_weight: float = 0.10,
             neutral_band: float = 0.0005,
             student_t_df: float = 3.0,
             regression_loss: str = "nll",
             regression_huber_delta: float = 1.0,
+            score_alignment_weight: float = 0.0,
+            score_alignment_floor: float = 0.10,
             volatility_consistency_weight: float = 0.0,
             volatility_consistency_limit: float = 2.5,
             temporal_smoothness_weight: float = 0.0,
@@ -354,12 +357,15 @@ if nn is not None:
             self.regression_weight = float(regression_weight)
             self.threshold_weight = float(threshold_weight)
             self.rank_weight = float(rank_weight)
+            self.return_rank_weight = float(return_rank_weight)
             self.regime_weight = float(regime_weight)
             self.neutral_band = float(neutral_band)
             self.distribution = distribution.lower().strip()
             self.student_t_df = float(student_t_df)
             self.regression_loss = str(regression_loss).lower().strip()
             self.regression_huber_delta = float(regression_huber_delta)
+            self.score_alignment_weight = float(score_alignment_weight)
+            self.score_alignment_floor = float(score_alignment_floor)
             self.volatility_consistency_weight = float(volatility_consistency_weight)
             self.volatility_consistency_limit = float(volatility_consistency_limit)
             self.temporal_smoothness_weight = float(temporal_smoothness_weight)
@@ -380,6 +386,13 @@ if nn is not None:
             if self.distribution == "student_t":
                 return student_t_nll(target, mean, log_scale, df=self.student_t_df)
             return gaussian_nll(target, mean, log_scale)
+
+        def _action_score(self, mean_return: Any, log_scale: Any, direction_logit: Any) -> Any:
+            sigma = _safe_scale(log_scale) if log_scale is not None else torch.ones_like(mean_return)
+            sigma = torch.clamp(sigma, min=self.score_alignment_floor)
+            direction_sign = torch.sign(direction_logit)
+            direction_sign = torch.where(direction_sign == 0, torch.ones_like(direction_sign), direction_sign)
+            return (mean_return / sigma) * direction_sign
 
         def forward(self, outputs: Any, targets: Any, batch: dict[str, Any] | None = None) -> Any:
             if not isinstance(outputs, dict):
@@ -436,6 +449,20 @@ if nn is not None:
                         reg_loss = self._distribution_loss(regression_target, mean_return, log_scale).mean()
                         components[f"{self.distribution}_nll"] = float(reg_loss.detach().cpu().item())
                 total = total + self.regression_weight * reg_loss
+
+                if self.return_rank_weight > 0:
+                    rank_loss = _pairwise_ranking_loss(mean_return, regression_target)
+                    total = total + self.return_rank_weight * rank_loss
+                    components["return_rank_loss"] = float(rank_loss.detach().cpu().item())
+
+                if self.score_alignment_weight > 0:
+                    action_score = self._action_score(mean_return, log_scale.reshape(-1) if log_scale is not None else None, direction_logit.reshape(-1))
+                    alignment_target = torch.sign(regression_target)
+                    non_zero_mask = alignment_target != 0
+                    if torch.any(non_zero_mask):
+                        alignment_loss = F.softplus(-action_score[non_zero_mask] * alignment_target[non_zero_mask]).mean()
+                        total = total + self.score_alignment_weight * alignment_loss
+                        components["score_alignment_loss"] = float(alignment_loss.detach().cpu().item())
 
                 if self.volatility_consistency_weight > 0:
                     volatility_penalty = _volatility_consistency_penalty(
@@ -512,11 +539,14 @@ def build_model_loss(
     regression_weight: float = 1.0,
     threshold_weight: float = 0.25,
     rank_weight: float = 0.10,
+    return_rank_weight: float = 0.0,
     regime_weight: float = 0.10,
     neutral_band: float = 0.0005,
     student_t_df: float = 3.0,
     regression_loss: str = "nll",
     regression_huber_delta: float = 1.0,
+    score_alignment_weight: float = 0.0,
+    score_alignment_floor: float = 0.10,
     volatility_consistency_weight: float = 0.0,
     volatility_consistency_limit: float = 2.5,
     temporal_smoothness_weight: float = 0.0,
@@ -538,11 +568,14 @@ def build_model_loss(
             regression_weight=regression_weight,
             threshold_weight=threshold_weight,
             rank_weight=rank_weight,
+            return_rank_weight=return_rank_weight,
             regime_weight=regime_weight,
             neutral_band=neutral_band,
             student_t_df=student_t_df,
             regression_loss=regression_loss,
             regression_huber_delta=regression_huber_delta,
+            score_alignment_weight=score_alignment_weight,
+            score_alignment_floor=score_alignment_floor,
             volatility_consistency_weight=volatility_consistency_weight,
             volatility_consistency_limit=volatility_consistency_limit,
             temporal_smoothness_weight=temporal_smoothness_weight,
