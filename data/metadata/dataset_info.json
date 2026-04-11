@@ -59,9 +59,9 @@
     "cs_volume_zscore_zscore"
   ],
   "split_row_counts": {
-    "train": 1705,
-    "val": 396,
-    "test": 351
+    "train": 117071,
+    "val": 27343,
+    "test": 24361
   },
   "window_size": 8,
   "stride": 1,
@@ -91,5 +91,13 @@
     "train_val": 0,
     "train_test": 0,
     "val_test": 0
+  },
+  "coverage_summary": {
+    "total_rows": 168775,
+    "train_rows": 117071,
+    "ticker_count": 61,
+    "history_days": 100,
+    "min_timestamp": "2025-10-13T12:15:00",
+    "max_timestamp": "2026-03-06T15:55:00"
   }
 }

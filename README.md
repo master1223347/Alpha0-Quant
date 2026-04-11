@@ -23,6 +23,12 @@ Single command entrypoint:
 .venv/bin/python -m src.pipeline.run_experiment --config experiments/exp_vol_confidence_panel.yaml
 ```
 
+Batch runner with dataset reuse across compatible configs:
+
+```bash
+.venv/bin/python -m src.pipeline.run_experiment_suite --configs experiments/exp_minn_*.yaml experiments/exp_vol_confidence_panel.yaml
+```
+
 Pipeline stages:
 1. Discover raw ticker files (`src/data/discover.py`)
 2. Load CSV OHLCV (`src/data/loader.py`)

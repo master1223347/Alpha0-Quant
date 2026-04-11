@@ -100,10 +100,12 @@ def run_training_pipeline(
     *,
     exchange: str | None = None,
     asset_type: str | None = None,
+    dataset_artifacts: BuildDatasetArtifacts | None = None,
 ) -> TrainPipelineArtifacts:
     """Build dataset, train model, and persist training outputs."""
     config = config or get_default_config()
-    dataset_artifacts = build_dataset(config, exchange=exchange, asset_type=asset_type)
+    if dataset_artifacts is None:
+        dataset_artifacts = build_dataset(config, exchange=exchange, asset_type=asset_type)
 
     train_dataset = dataset_artifacts.datasets.get("train")
     if train_dataset is None or len(train_dataset) == 0:

@@ -1,0 +1,94 @@
+[
+  {
+    "epoch": 1,
+    "train_loss": -0.6021351740252243,
+    "val_loss": -1.5160615265926467,
+    "val_metrics": {
+      "accuracy": 0.5036153996482314,
+      "precision": 0.5036153996482314,
+      "recall": 1.0,
+      "auc": 0.5,
+      "tp": 10308,
+      "fp": 10160,
+      "tn": 0,
+      "fn": 0,
+      "brier_score": 0.4963846003517686,
+      "ece": 0.49638460035176857,
+      "return_mae": NaN,
+      "return_rmse": NaN,
+      "return_nll": NaN,
+      "avg_predicted_return": NaN,
+      "avg_actual_return": NaN
+    },
+    "score": 0.5
+  },
+  {
+    "epoch": 2,
+    "train_loss": -9.329384724906438,
+    "val_loss": -8.644711824221032,
+    "val_metrics": {
+      "accuracy": 0.5036153996482314,
+      "precision": 0.5036153996482314,
+      "recall": 1.0,
+      "auc": 0.5002203872689662,
+      "tp": 10308,
+      "fp": 10160,
+      "tn": 0,
+      "fn": 0,
+      "brier_score": 0.4959187078123525,
+      "ece": 0.49591290242343855,
+      "return_mae": NaN,
+      "return_rmse": NaN,
+      "return_nll": NaN,
+      "avg_predicted_return": NaN,
+      "avg_actual_return": NaN
+    },
+    "score": 0.5002203872689662
+  },
+  {
+    "epoch": 3,
+    "train_loss": -22.4466634764942,
+    "val_loss": -18.85674041676744,
+    "val_metrics": {
+      "accuracy": 0.5036153996482314,
+      "precision": 0.5036153996482314,
+      "recall": 1.0,
+      "auc": 0.5042015852682268,
+      "tp": 10308,
+      "fp": 10160,
+      "tn": 0,
+      "fn": 0,
+      "brier_score": 0.48822887445557744,
+      "ece": 0.48703760448931854,
+      "return_mae": NaN,
+      "return_rmse": NaN,
+      "return_nll": NaN,
+      "avg_predicted_return": NaN,
+      "avg_actual_return": NaN
+    },
+    "score": 0.5042015852682268
+  },
+  {
+    "epoch": 4,
+    "train_loss": -30.824518897127376,
+    "val_loss": -21.538657446888006,
+    "val_metrics": {
+      "accuracy": 0.5036153996482314,
+      "precision": 0.5036153996482314,
+      "recall": 1.0,
+      "auc": 0.5036721344785337,
+      "tp": 10308,
+      "fp": 10160,
+      "tn": 0,
+      "fn": 0,
+      "brier_score": 0.4932412319621566,
+      "ece": 0.49323788187964557,
+      "return_mae": NaN,
+      "return_rmse": NaN,
+      "return_nll": NaN,
+      "avg_predicted_return": NaN,
+      "avg_actual_return": NaN
+    },
+    "score": 0.5036721344785337
+  }
+]
