@@ -130,6 +130,16 @@ def run_backtest(
     else:
         scores_for_selection = [float(value) for value in blended_scores]
 
+    score_nan_count = 0
+    sanitized_scores: list[float] = []
+    for value in scores_for_selection:
+        if math.isfinite(value):
+            sanitized_scores.append(float(value))
+        else:
+            score_nan_count += 1
+            sanitized_scores.append(0.0)
+    scores_for_selection = sanitized_scores
+
     selection = str(selection_mode or "global_abs").strip().lower()
     long_indices: set[int] = set()
     short_indices: set[int] = set()
@@ -159,7 +169,7 @@ def run_backtest(
     net_returns: list[float] = []
 
     long_count = short_count = flat_count = 0
-    nan_signal_count = 0
+    nan_signal_count = score_nan_count
     trade_count = 0
     previous_position = 0
     cost_fraction = (float(cost_bps_per_trade) + float(slippage_bps)) / 10000.0
@@ -221,7 +231,14 @@ def run_backtest(
         if turnover > 0:
             trade_count += 1
 
-        raw_return = (future_close - current_close) / current_close if current_close > 0 and math.isfinite(current_close) else 0.0
+        if (
+            current_close > 0
+            and math.isfinite(current_close)
+            and math.isfinite(future_close)
+        ):
+            raw_return = (future_close - current_close) / current_close
+        else:
+            raw_return = 0.0
         gross_strategy_return = position * raw_return
         trade_cost = cost_fraction * turnover
         net_strategy_return = gross_strategy_return - trade_cost

@@ -135,7 +135,7 @@ def _build_confidence_bucket_summary(
     )
     return {
         "top_percentile": float(top_percentile),
-        "selected_rows": int(keep_count),
+        "selected_rows": int(len(selected_indices)),
         "non_neutral_rows": int(non_neutral_count),
         "directional_accuracy": directional_accuracy,
         "directional_precision": directional_precision,
@@ -323,10 +323,16 @@ def run_evaluation_pipeline(
     )
 
     if getattr(validation, "action_scores", None):
+        precision_labels = validation.labels
+        precision_scores = validation.action_scores
+        if validation.three_class_labels and len(validation.three_class_labels) == len(validation.action_scores):
+            directional_indices = [index for index, label in enumerate(validation.three_class_labels) if label != 1]
+            precision_labels = [1 if validation.three_class_labels[index] == 2 else 0 for index in directional_indices]
+            precision_scores = [validation.action_scores[index] for index in directional_indices]
         report.metrics["precision_at_k"] = {
-            "top_1%": _precision_at_k(labels=validation.labels, scores=validation.action_scores, top_fraction=0.01),
-            "top_5%": _precision_at_k(labels=validation.labels, scores=validation.action_scores, top_fraction=0.05),
-            "top_10%": _precision_at_k(labels=validation.labels, scores=validation.action_scores, top_fraction=0.10),
+            "top_1%": _precision_at_k(labels=precision_labels, scores=precision_scores, top_fraction=0.01),
+            "top_5%": _precision_at_k(labels=precision_labels, scores=precision_scores, top_fraction=0.05),
+            "top_10%": _precision_at_k(labels=precision_labels, scores=precision_scores, top_fraction=0.10),
         }
 
     confidence_bucket_sweep = _float_sequence(
