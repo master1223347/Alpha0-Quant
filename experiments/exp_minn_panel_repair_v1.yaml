@@ -2,14 +2,20 @@ name: minn_panel_simplified_v1
 
 data:
   raw_root: data/raw
-  max_tickers: 200
+  source_timezone: UTC
+  market_timezone: America/New_York
+  max_tickers: null
   min_sequence_length: 12
+  min_required_rows: 20000
+  min_required_train_rows: 12000
+  min_required_tickers: 100
+  min_required_history_days: 45
 
 universe:
   exchange: null
   asset_type: null
   tickers: null
-  max_tickers: 200
+  max_tickers: null
   min_sequence_length: 12
 
 targets:

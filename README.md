@@ -36,6 +36,10 @@ Pipeline stages:
 10. Evaluate + backtest + confidence sweeps (`src/pipeline/evaluate_model.py`)
 11. Persist artifacts (`metrics.json`, `evaluation_report.json`, `backtest.json`, `experiment_result.json`)
 
+The feature pipeline now supports timezone normalization before regular-session filtering:
+- `data.source_timezone` (default `UTC`)
+- `data.market_timezone` (default `America/New_York`)
+
 ## Data Contract
 
 Expected raw CSV columns:
@@ -129,22 +133,28 @@ In code:
 - normalization fit on train split only
 - no forward bars used in rolling feature windows
 - explicit execution-lag handling in backtest
+- dataset coverage guards before training:
+  - `data.min_required_rows`
+  - `data.min_required_train_rows`
+  - `data.min_required_tickers`
+  - `data.min_required_history_days`
 
-Fast sanity script:
+Validation ladder (data-first):
 
 ```bash
-.venv/bin/python scripts/tiny_pipeline_sanity.py
+.venv/bin/python -m src.pipeline.run_validation_ladder --config experiments/validate.yaml
 ```
 
 Output:
-- `models/logs/tiny_pipeline_sanity.json`
+- `models/logs/validation_ladder.json`
 
-Checks include:
-- label alignment
-- normalization train-only fit
-- split overlap/time-order checks
-- prefix invariance for rolling feature builders
-- backtest lag/cost accounting correctness
+Ladder includes:
+- temporal vs cross-sectional task setups
+- baselines: prior, logistic, tree, tiny neural
+- feature-group ablations
+- label learnability variants (next-bar, multi-bar, volatility expansion, residualized return)
+- ranking learnability checks (`cross_sectional_rank`)
+- backtest consistency audit for each baseline
 
 ## Quick Start
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -221,6 +222,78 @@ def _write_table(path: str | Path, rows: list[dict[str, Any]]) -> Path:
         return fallback
 
 
+def _coerce_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if hasattr(value, "to_pydatetime"):
+        try:
+            return value.to_pydatetime()
+        except Exception:
+            return None
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except Exception:
+            return None
+    return None
+
+
+def _validate_dataset_coverage(
+    *,
+    config: ExperimentConfig,
+    split_row_counts: dict[str, int],
+    all_rows: list[dict[str, Any]],
+    ticker_count: int,
+) -> dict[str, Any]:
+    min_required_rows = int(max(0, getattr(config.data, "min_required_rows", 0)))
+    min_required_train_rows = int(max(0, getattr(config.data, "min_required_train_rows", 0)))
+    min_required_tickers = int(max(0, getattr(config.data, "min_required_tickers", 0)))
+    min_required_history_days = int(max(0, getattr(config.data, "min_required_history_days", 0)))
+
+    total_rows = len(all_rows)
+    train_rows = int(split_row_counts.get("train", 0))
+    timestamps = [_coerce_datetime(row.get("timestamp")) for row in all_rows]
+    valid_timestamps = [value for value in timestamps if value is not None]
+    unique_days = sorted({value.date() for value in valid_timestamps})
+    history_days = len(unique_days)
+
+    if min_required_rows > 0 and total_rows < min_required_rows:
+        raise ValueError(
+            f"Dataset too small: total_rows={total_rows} < min_required_rows={min_required_rows}. "
+            "Increase history/tickers before training."
+        )
+    if min_required_train_rows > 0 and train_rows < min_required_train_rows:
+        raise ValueError(
+            f"Train split too small: train_rows={train_rows} < min_required_train_rows={min_required_train_rows}. "
+            "Increase history/tickers before training."
+        )
+    if min_required_tickers > 0 and ticker_count < min_required_tickers:
+        raise ValueError(
+            f"Universe too small: ticker_count={ticker_count} < min_required_tickers={min_required_tickers}. "
+            "Increase universe coverage before training."
+        )
+    if min_required_history_days > 0 and history_days < min_required_history_days:
+        raise ValueError(
+            f"History too short: history_days={history_days} < min_required_history_days={min_required_history_days}. "
+            "Increase date range before training."
+        )
+
+    if valid_timestamps:
+        min_timestamp = min(valid_timestamps)
+        max_timestamp = max(valid_timestamps)
+    else:
+        min_timestamp = None
+        max_timestamp = None
+    return {
+        "total_rows": total_rows,
+        "train_rows": train_rows,
+        "ticker_count": ticker_count,
+        "history_days": history_days,
+        "min_timestamp": min_timestamp.isoformat() if min_timestamp is not None else None,
+        "max_timestamp": max_timestamp.isoformat() if max_timestamp is not None else None,
+    }
+
+
 def build_dataset(
     config: ExperimentConfig | None = None,
     *,
@@ -332,6 +405,12 @@ def build_dataset(
     labels_output = _write_table(config.data.labels_path, label_rows)
     LOGGER.info("Dataset rows written to %s", dataset_output)
     LOGGER.info("Label rows written to %s", labels_output)
+    coverage_summary = _validate_dataset_coverage(
+        config=config,
+        split_row_counts=split_row_counts,
+        all_rows=all_rows,
+        ticker_count=feature_artifacts.ticker_count,
+    )
 
     info_path = Path(config.data.metadata_dir) / "dataset_info.json"
     info_path.parent.mkdir(parents=True, exist_ok=True)
@@ -349,6 +428,7 @@ def build_dataset(
                 "target_columns": list(TARGET_COLUMNS),
                 "context_size": panel_context_size if dataset_type == "panel" else None,
                 "timestamp_overlap_counts": overlap_counts,
+                "coverage_summary": coverage_summary,
             },
             handle,
             indent=2,

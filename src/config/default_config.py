@@ -15,8 +15,14 @@ class DataConfig:
     features_path: str = "data/processed/features.parquet"
     dataset_path: str = "data/processed/dataset.parquet"
     labels_path: str = "data/processed/labels.parquet"
+    source_timezone: str = "UTC"
+    market_timezone: str = "America/New_York"
     max_tickers: int | None = None
     min_sequence_length: int = 40
+    min_required_rows: int = 0
+    min_required_train_rows: int = 0
+    min_required_tickers: int = 0
+    min_required_history_days: int = 0
 
 
 @dataclass(slots=True)

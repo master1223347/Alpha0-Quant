@@ -103,7 +103,11 @@ def build_features_for_ticker(ticker_file: TickerFile, config: ExperimentConfig)
     cleaned_rows = clean_ohlcv_rows(raw_rows)
     validate_ohlcv_rows(cleaned_rows, stage=f"{ticker_file.ticker}_cleaned", raise_on_error=True)
 
-    aligned_sequences = align_ticker_rows(cleaned_rows)
+    aligned_sequences = align_ticker_rows(
+        cleaned_rows,
+        source_timezone=str(getattr(config.data, "source_timezone", "UTC")),
+        market_timezone=str(getattr(config.data, "market_timezone", "America/New_York")),
+    )
     min_sequence_length = (
         config.universe.min_sequence_length
         if config.universe.min_sequence_length is not None
@@ -149,6 +153,13 @@ def _write_feature_rows(path: str | Path, rows: list[dict[str, Any]]) -> Path:
         with fallback.open("w", encoding="utf-8") as handle:
             json.dump(rows, handle, default=str)
         return fallback
+    return output_path
+
+
+def _write_ticker_list(metadata_dir: str | Path, tickers: list[str]) -> Path:
+    output_path = ensure_parent(Path(metadata_dir) / "ticker_list.json")
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(sorted(tickers), handle, indent=2)
     return output_path
 
 
@@ -210,7 +221,9 @@ def build_feature_store(
         feature_columns = base_feature_columns or _feature_columns_from_sequence(flattened_rows[:1])
 
     output_path = _write_feature_rows(config.data.features_path, flattened_rows)
+    ticker_list_path = _write_ticker_list(config.data.metadata_dir, list(ticker_sequences.keys()))
     LOGGER.info("Feature rows written to %s", output_path)
+    LOGGER.info("Ticker list written to %s", ticker_list_path)
 
     return FeatureBuildArtifacts(
         ticker_sequences=ticker_sequences,

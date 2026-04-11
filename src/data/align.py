@@ -95,9 +95,51 @@ def detect_sequence_breaks(rows: list[OhlcvRow]) -> list[SequenceBreak]:
     return breaks
 
 
-def align_ticker_rows(rows: list[OhlcvRow]) -> list[list[OhlcvRow]]:
-    """Filter to the regular session and split rows at day boundaries or gaps."""
-    return split_contiguous_sequences(rows)
+def _convert_timezone(rows: list[OhlcvRow], *, source_timezone: str, market_timezone: str) -> list[OhlcvRow]:
+    if not rows:
+        return rows
+    source = source_timezone.strip()
+    market = market_timezone.strip()
+    if not source or not market or source == market:
+        return rows
+
+    try:
+        from zoneinfo import ZoneInfo
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError("zoneinfo is required for timezone conversion") from exc
+
+    source_zone = ZoneInfo(source)
+    market_zone = ZoneInfo(market)
+    converted: list[OhlcvRow] = []
+    for row in rows:
+        timestamp = row["timestamp"]
+        converted_timestamp = timestamp.replace(tzinfo=source_zone).astimezone(market_zone).replace(tzinfo=None)
+        converted.append(
+            {
+                "timestamp": converted_timestamp,
+                "open": row["open"],
+                "high": row["high"],
+                "low": row["low"],
+                "close": row["close"],
+                "volume": row["volume"],
+            }
+        )
+    return converted
+
+
+def align_ticker_rows(
+    rows: list[OhlcvRow],
+    *,
+    source_timezone: str = "UTC",
+    market_timezone: str = "America/New_York",
+) -> list[list[OhlcvRow]]:
+    """Filter to regular market session and split rows at day boundaries or gaps."""
+    localized_rows = _convert_timezone(
+        rows,
+        source_timezone=source_timezone,
+        market_timezone=market_timezone,
+    )
+    return split_contiguous_sequences(localized_rows)
 
 
 def align_ticker_frames(rows: list[OhlcvRow]) -> list["pd.DataFrame"]:
