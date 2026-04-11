@@ -147,7 +147,15 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
                 log_values = [float(value) for value in log_scale.detach().cpu().reshape(-1).tolist()]
                 log_scales.extend(log_values)
 <<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
                 sigma_values.extend(float(math.log1p(math.exp(value)) + 1e-6) for value in log_values)
+=======
+                sigma_values.extend(float(_softplus_scalar(value) + 1e-6) for value in log_values)
+>>>>>>> theirs
+=======
+                sigma_values.extend(float(_softplus_scalar(value) + 1e-6) for value in log_values)
+>>>>>>> theirs
 =======
                 sigma_values.extend(float(_softplus_scalar(value) + 1e-6) for value in log_values)
 >>>>>>> theirs
