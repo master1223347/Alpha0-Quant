@@ -85,6 +85,14 @@ class ArtifactTensorDataset:
         return int(self.y.shape[0])
 
     def __getitem__(self, index: int) -> dict[str, Any]:
+        def _normalize_timestamp(value: Any) -> Any:
+            if hasattr(value, "timestamp"):
+                try:
+                    return float(value.timestamp())
+                except Exception:
+                    return value
+            return value
+
         sample = {
             "X": self.X[index],
             "y": self.y[index],
@@ -100,6 +108,7 @@ class ArtifactTensorDataset:
         if self.rank_target is not None:
             sample["rank_target"] = self.rank_target[index]
         if self.timestamps is not None:
+<<<<<<< ours
             timestamp_value = self.timestamps[index]
             if hasattr(timestamp_value, "timestamp"):
                 try:
@@ -107,6 +116,9 @@ class ArtifactTensorDataset:
                 except Exception:
                     pass
             sample["timestamp"] = timestamp_value
+=======
+            sample["timestamp"] = _normalize_timestamp(self.timestamps[index])
+>>>>>>> theirs
         if self.tickers is not None:
             sample["ticker"] = self.tickers[index]
         return sample

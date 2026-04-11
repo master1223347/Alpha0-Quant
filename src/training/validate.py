@@ -55,6 +55,14 @@ def _empty_metrics() -> ClassificationMetrics:
     )
 
 
+def _softplus_scalar(value: float) -> float:
+    if value > 20.0:
+        return value
+    if value < -20.0:
+        return math.exp(value)
+    return math.log1p(math.exp(value))
+
+
 def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) -> ValidationResult:
     """Run one validation pass and return aggregate metrics."""
     try:
@@ -138,7 +146,11 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
             if log_scale is not None:
                 log_values = [float(value) for value in log_scale.detach().cpu().reshape(-1).tolist()]
                 log_scales.extend(log_values)
+<<<<<<< ours
                 sigma_values.extend(float(math.log1p(math.exp(value)) + 1e-6) for value in log_values)
+=======
+                sigma_values.extend(float(_softplus_scalar(value) + 1e-6) for value in log_values)
+>>>>>>> theirs
 
     avg_loss = total_loss / batch_count if batch_count > 0 else 0.0
     if up_probabilities and down_probabilities:
