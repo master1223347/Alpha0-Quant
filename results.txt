@@ -1,53 +1,59 @@
-Alpha0 Quant - Latest Run Results
-Date: 2026-04-05 17:51:32
+Alpha0 Quant - Retry Results
+Date: 2026-04-10 22:46:09 PDT
 
-Run command:
-.venv/bin/python -m src.pipeline.run_experiment --config experiments/exp_vol_confidence_panel.yaml
+Goal:
+- Rescue failing MINN run (zero trades / degenerate predictions)
+- Validate with a fallback directional baseline for isolation
 
-Config:
-- name: vol_confidence_panel_transformer
-- model: panel_transformer
-- objective: 3-class vol_direction_label + Huber(vol_target_clipped)
-- loss weights: cls=0.8, reg=0.2
+Run 1 (Rescue MINN):
+.venv/bin/python -m src.pipeline.run_experiment --config experiments/exp_minn_panel_rescue_v1.yaml
 
-Training (models/logs/vol_confidence/metrics.json):
-- best_epoch: 4
-- best_score (selection metric): 0.4721963342652998
-- final_validation.accuracy: 0.45374449339207046
-- final_validation.precision: 0.45454545454545453
-- final_validation.recall: 0.3448275862068966
-- final_validation.auc: 0.4721963342652998
+Config deltas vs failing run:
+- targets: primary_target=vol_direction_label, threshold_target=vol_direction_label, return_target=vol_target_clipped
+- model: include_rank_head=false, include_regime_head=false, distribution=student_t
+- training: direction=0.45, threshold=0.40, regression=0.15, all auxiliary regularizers=0.0
+- backtest: confidence_threshold=null, top_percentile=0.20, require_directional_agreement=false
 
-Evaluation Report (models/logs/vol_confidence/evaluation_report.json):
-- accuracy (non-neutral directional): 0.47783251231527096
-- precision (non-neutral directional): 0.6041666666666666
-- recall (non-neutral directional): 0.25
-- auc: 0.520709472849782
-- best_confidence_bucket.top_percentile: 0.05
-- best_confidence_bucket.directional_accuracy: 0.5454545454545454
-- best_confidence_bucket.hit_rate: 0.46153846153846156
-- best_confidence_bucket.sharpe_after_costs: -13.070712348061258
-- best_confidence_bucket.trade_count: 8
+Results (models/logs/minn_rescue_v1):
+- best_epoch: 1
+- final_validation.auc: 0.5510473019836316
+- final_validation.precision: 0.5221518987341772
+- final_validation.recall: 0.9269662921348315
+- evaluation.auc (test): 0.4904433497536946
+- backtest.trade_count: 35
+- backtest.long_count: 65
+- backtest.short_count: 4
+- backtest.pnl: 0.028054312423433553
+- backtest.sharpe: 7.556664111883282
+- backtest.hit_rate: 0.5652173913043478
+- confidence bucket trade_count: [14, 18, 35, 41]
+- confidence bucket sharpe_after_costs: [0.7643802591337806, 10.203494467458576, 7.556664111883282, 14.725489477414678]
 
-Backtest (models/logs/vol_confidence/backtest.json):
-- pnl: 0.0
-- sharpe: 0.0
-- trade_count: 0
+Run 2 (Fallback Baseline Isolation):
+.venv/bin/python -m src.pipeline.run_experiment --config experiments/exp_panel_direction_baseline_v1.yaml
 
-k Sweep (models/logs/vol_confidence_sweep/summary.json):
-- k values: 0.15, 0.25, 0.35
-- seeds: 7, 42
-- k=0.15: directional_accuracy_mean=0.43577981651376146, test_auc_mean=0.43385380919698013, best_bucket_hit_rate_mean=0.3653846153846154, best_bucket_sharpe_mean=-7.397809810816881
-- k=0.25: directional_accuracy_mean=0.4507389162561576, test_auc_mean=0.49707689258818866, best_bucket_hit_rate_mean=0.42307692307692313, best_bucket_sharpe_mean=-3.7836299781733542
-- k=0.35: directional_accuracy_mean=0.48138297872340424, test_auc_mean=0.5169608861197645, best_bucket_hit_rate_mean=0.4326923076923077, best_bucket_sharpe_mean=-1.9085207088258622
+Results (models/logs/panel_direction_baseline_v1):
+- best_epoch: 5
+- final_validation.auc: 0.5455462184873949
+- final_validation.precision: 0.5384615384615384
+- final_validation.recall: 0.8823529411764706
+- evaluation.auc (test): 0.5072282457603559
+- backtest.trade_count: 48
+- backtest.long_count: 0
+- backtest.short_count: 105
+- backtest.pnl: -0.06304691034917728
+- backtest.sharpe: -14.3595986310102
+- backtest.hit_rate: 0.3142857142857143
 
-Best overall sweep slice:
-- k: 0.35
-- seed: 7
-- directional_accuracy_non_neutral: 0.5319148936170213
-- best_bucket.top_percentile: 0.2
-- best_bucket.directional_accuracy: 0.5365853658536586
-- best_bucket.hit_rate: 0.5576923076923077
-- best_bucket.sharpe_after_costs: 1.7879212508833955
-- best_bucket.trade_count: 24
-- best_bucket.pnl_after_costs: 0.004063612735450278
+Interpretation:
+- The rescue MINN run successfully removed degeneracy: trades are emitted and confidence buckets are populated.
+- The fallback baseline also trades but loses money, while rescue MINN is profitable on this slice.
+- Test AUC is still weak (~0.49 to 0.51), so classification ranking signal remains fragile despite better decision/trade behavior.
+
+Artifacts:
+- models/logs/minn_rescue_v1/experiment_result.json
+- models/logs/minn_rescue_v1/evaluation_report.json
+- models/logs/minn_rescue_v1/backtest.json
+- models/logs/panel_direction_baseline_v1/experiment_result.json
+- models/logs/panel_direction_baseline_v1/evaluation_report.json
+- models/logs/panel_direction_baseline_v1/backtest.json

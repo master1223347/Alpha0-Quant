@@ -59,16 +59,16 @@
     "cs_volume_zscore_zscore"
   ],
   "split_row_counts": {
-    "train": 1169,
-    "val": 268,
-    "test": 261
+    "train": 1705,
+    "val": 396,
+    "test": 351
   },
   "window_size": 8,
   "stride": 1,
   "dataset_type": "panel",
   "split_mode": "global_time",
-  "primary_target": "vol_direction_label",
-  "return_target": "vol_target_clipped",
+  "primary_target": "label",
+  "return_target": "next_log_return",
   "target_columns": [
     "next_log_return",
     "vol_target",

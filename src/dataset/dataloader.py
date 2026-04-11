@@ -108,25 +108,7 @@ class ArtifactTensorDataset:
         if self.rank_target is not None:
             sample["rank_target"] = self.rank_target[index]
         if self.timestamps is not None:
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-            timestamp_value = self.timestamps[index]
-            if hasattr(timestamp_value, "timestamp"):
-                try:
-                    timestamp_value = float(timestamp_value.timestamp())
-                except Exception:
-                    pass
-            sample["timestamp"] = timestamp_value
-=======
             sample["timestamp"] = _normalize_timestamp(self.timestamps[index])
->>>>>>> theirs
-=======
-            sample["timestamp"] = _normalize_timestamp(self.timestamps[index])
->>>>>>> theirs
-=======
-            sample["timestamp"] = _normalize_timestamp(self.timestamps[index])
->>>>>>> theirs
         if self.tickers is not None:
             sample["ticker"] = self.tickers[index]
         return sample
