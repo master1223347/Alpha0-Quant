@@ -35,6 +35,19 @@ def _float_sequence(values: Any, *, fallback: tuple[float, ...]) -> list[float]:
     return [float(values)]
 
 
+def _build_regime_backtest_kwargs(config: ExperimentConfig) -> dict[str, Any]:
+    return {
+        "enable_regime_adaptation": bool(getattr(config.backtest, "enable_regime_adaptation", False)),
+        "regime_states": int(getattr(config.backtest, "regime_states", 3)),
+        "regime_feature_window": int(getattr(config.backtest, "regime_feature_window", 32)),
+        "regime_random_state": int(getattr(config.backtest, "regime_random_state", 7)),
+        "trending_policy": str(getattr(config.backtest, "trending_policy", "follow")),
+        "mean_reverting_policy": str(getattr(config.backtest, "mean_reverting_policy", "flip")),
+        "volatile_policy": str(getattr(config.backtest, "volatile_policy", "flat")),
+        "volatile_confidence_threshold": float(getattr(config.backtest, "volatile_confidence_threshold", 0.70)),
+    }
+
+
 def _safe_probability(up_probability: float, down_probability: float) -> float:
     denominator = float(up_probability + down_probability)
     if denominator <= 1e-8:
@@ -61,6 +74,7 @@ def _build_confidence_bucket_summary(
     flip_positions: bool,
     cost_bps_per_trade: float,
     slippage_bps: float,
+    regime_backtest_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from src.evaluation.metrics import compute_classification_metrics
 
@@ -128,6 +142,7 @@ def _build_confidence_bucket_summary(
         cost_bps_per_trade=cost_bps_per_trade,
         slippage_bps=slippage_bps,
         signal_scores=getattr(validation, "action_scores", None),
+        **(regime_backtest_kwargs or {}),
     )
 
     average_realized_return = (
@@ -282,6 +297,7 @@ def run_evaluation_pipeline(
     slippage_bps = float(getattr(config.backtest, "slippage_bps", 0.0)) if include_costs else 0.0
 
     validation = validate_epoch(model, test_loader, loss_fn, device=device)
+    regime_backtest_kwargs = _build_regime_backtest_kwargs(config)
     selection_mode = str(getattr(config.backtest, "selection_mode", "global_abs")).lower().strip()
     score_source = str(getattr(config.backtest, "score_source", "expected_utility")).lower().strip()
     long_short_percentile = getattr(config.backtest, "long_short_percentile", None)
@@ -313,6 +329,7 @@ def run_evaluation_pipeline(
         require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),
         confidence_mu_agreement_weight=float(getattr(config.backtest, "confidence_mu_agreement_weight", 0.50)),
         signal_mu_sigma_floor=float(getattr(config.backtest, "signal_mu_sigma_floor", 0.05)),
+        **regime_backtest_kwargs,
     )
 
     report = build_evaluation_report(
@@ -348,6 +365,7 @@ def run_evaluation_pipeline(
             flip_positions=bool(getattr(config.backtest, "flip_positions", False)),
             cost_bps_per_trade=cost_bps_per_trade,
             slippage_bps=slippage_bps,
+            regime_backtest_kwargs=regime_backtest_kwargs,
         )
         for top_percentile in confidence_bucket_sweep
     ]
@@ -403,6 +421,7 @@ def run_evaluation_pipeline(
             require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),
             confidence_mu_agreement_weight=float(getattr(config.backtest, "confidence_mu_agreement_weight", 0.50)),
             signal_mu_sigma_floor=float(getattr(config.backtest, "signal_mu_sigma_floor", 0.05)),
+            **regime_backtest_kwargs,
         ).to_dict()
         for threshold in confidence_threshold_sweep
     }

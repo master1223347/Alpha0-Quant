@@ -14,6 +14,7 @@ The codebase now centers around a volatility-aware, confidence-filtered workflow
 - training defaults prioritize threshold classification (`0.8`) over regression (`0.2`)
 - evaluation reports non-neutral directional metrics, confidence buckets, and confidence-threshold sweeps
 - backtest supports `confidence_threshold`, `top_percentile`, execution lag, and costs/slippage
+- optional clustering-assisted HMM regime detection with regime-aware strategy adaptation
 
 ## End-to-End Pipeline
 
@@ -130,6 +131,16 @@ Backtest (`src/evaluation/backtest.py`) supports:
 - optional position flip (`flip_positions`)
 - transaction costs + slippage (bps)
 - signal source selection: `classification_prob`, `mu`, `mu_over_sigma`, `confidence_plus_mu`
+- regime-aware adaptation (`trending`, `mean_reverting`, `volatile`) via clustering + HMM smoothing
+
+Regime adaptation knobs (`backtest.*`):
+- `enable_regime_adaptation` (bool)
+- `regime_states` (default `3`)
+- `regime_feature_window` (default `32`)
+- `trending_policy` (`follow`/`flip`/`flat`)
+- `mean_reverting_policy` (`follow`/`flip`/`flat`)
+- `volatile_policy` (`follow`/`flip`/`flat`/`high_confidence`)
+- `volatile_confidence_threshold` (used by `high_confidence`)
 
 ## Leakage and Correctness Safeguards
 
@@ -180,6 +191,7 @@ Other configs available in `experiments/` include:
 - `exp_minn_panel.yaml`
 - `exp_minn_tcn.yaml`
 - `exp_minn_gnn.yaml`
+- `exp_vol_confidence_regime.yaml`
 
 ## Main Artifacts
 

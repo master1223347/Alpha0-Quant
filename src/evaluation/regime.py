@@ -230,7 +230,11 @@ def detect_market_regimes(
         prev_close = float(close[index - 1])
         curr_close = float(close[index])
         if prev_close > 0 and math.isfinite(prev_close) and math.isfinite(curr_close):
-            returns.append((curr_close - prev_close) / prev_close)
+            bar_return = (curr_close - prev_close) / prev_close
+            # Guard against cross-symbol boundary jumps in flattened panels.
+            if abs(bar_return) > 0.20:
+                bar_return = 0.0
+            returns.append(bar_return)
         else:
             returns.append(0.0)
 
