@@ -142,6 +142,14 @@ class BacktestConfig:
     signal_mu_sigma_floor: float = 0.05
     require_directional_agreement: bool = False
     confidence_mu_agreement_weight: float = 0.50
+    enable_regime_adaptation: bool = False
+    regime_states: int = 3
+    regime_feature_window: int = 32
+    regime_random_state: int = 7
+    trending_policy: str = "follow"
+    mean_reverting_policy: str = "flip"
+    volatile_policy: str = "flat"
+    volatile_confidence_threshold: float = 0.70
 
 
 @dataclass(slots=True)

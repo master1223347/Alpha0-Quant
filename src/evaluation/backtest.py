@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
+from typing import Any
+
+from src.evaluation.regime import adapt_position_to_regime, detect_market_regimes
 
 
 @dataclass(slots=True)
@@ -29,8 +32,13 @@ class BacktestReport:
     long_short_percentile: float | None = None
     selected_bars: int = 0
     equity_curve: list[float] | None = None
+    regime_adaptation_enabled: bool = False
+    regime_counts: dict[str, int] | None = None
+    regime_transition_matrix: list[list[float]] | None = None
+    regime_state_mapping: dict[str, str] | None = None
+    regime_policies: dict[str, str] | None = None
 
-    def to_dict(self) -> dict[str, float | int]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -67,6 +75,14 @@ def run_backtest(
     require_directional_agreement: bool = False,
     confidence_mu_agreement_weight: float = 0.50,
     signal_mu_sigma_floor: float = 0.05,
+    enable_regime_adaptation: bool = False,
+    regime_states: int = 3,
+    regime_feature_window: int = 32,
+    regime_random_state: int = 7,
+    trending_policy: str = "follow",
+    mean_reverting_policy: str = "flip",
+    volatile_policy: str = "flat",
+    volatile_confidence_threshold: float = 0.70,
 ) -> BacktestReport:
     """Run a threshold-based long/short strategy."""
     if probabilities is None and (up_probabilities is None or down_probabilities is None):
@@ -163,6 +179,48 @@ def run_backtest(
             ranked_indices = sorted(range(len(up_probabilities)), key=lambda index: confidence_scores[index], reverse=True)
         selected_indices = set(ranked_indices[:keep_count])
 
+    regime_sequence = ["trending" for _ in up_probabilities]
+    regime_counts: dict[str, int] | None = None
+    regime_transition_matrix: list[list[float]] | None = None
+    regime_state_mapping: dict[str, str] | None = None
+    regime_enabled = bool(enable_regime_adaptation)
+    regime_policies = {
+        "trending": str(trending_policy),
+        "mean_reverting": str(mean_reverting_policy),
+        "volatile": str(volatile_policy),
+        "volatile_confidence_threshold": f"{float(volatile_confidence_threshold):.4f}",
+    }
+    if regime_enabled:
+        try:
+            regime_result = detect_market_regimes(
+                close=[float(value) for value in close],
+                n_states=int(regime_states),
+                feature_window=int(regime_feature_window),
+                random_state=int(regime_random_state),
+            )
+            if len(regime_result.regime_sequence) == len(up_probabilities):
+                regime_sequence = list(regime_result.regime_sequence)
+            regime_transition_matrix = regime_result.transition_matrix
+            regime_state_mapping = {
+                str(int(state)): str(label)
+                for state, label in regime_result.state_to_regime.items()
+            }
+            regime_counts = {
+                "trending": 0,
+                "mean_reverting": 0,
+                "volatile": 0,
+            }
+            for regime_name in regime_sequence:
+                key = str(regime_name).strip().lower()
+                if key not in regime_counts:
+                    regime_counts[key] = 0
+                regime_counts[key] += 1
+        except Exception:
+            regime_enabled = False
+            regime_counts = None
+            regime_transition_matrix = None
+            regime_state_mapping = None
+
     signal_positions: list[int] = []
     positions: list[int] = []
     gross_returns: list[float] = []
@@ -209,6 +267,16 @@ def run_backtest(
                 directional_sign = 1 if up_probability >= down_probability else -1
                 if raw_position != 0 and (1 if raw_position > 0 else -1) != directional_sign:
                     raw_position = 0
+        if regime_enabled:
+            raw_position = adapt_position_to_regime(
+                raw_position=raw_position,
+                regime=regime_sequence[index],
+                confidence=confidence_scores[index],
+                trending_policy=trending_policy,
+                mean_reverting_policy=mean_reverting_policy,
+                volatile_policy=volatile_policy,
+                volatile_confidence_threshold=float(volatile_confidence_threshold),
+            )
 
         position = -raw_position if flip_positions else raw_position
         signal_positions.append(position)
@@ -301,4 +369,9 @@ def run_backtest(
         long_short_percentile=float(long_short_percentile) if long_short_percentile is not None else None,
         selected_bars=len(selected_indices),
         equity_curve=equity_curve,
+        regime_adaptation_enabled=regime_enabled,
+        regime_counts=regime_counts,
+        regime_transition_matrix=regime_transition_matrix,
+        regime_state_mapping=regime_state_mapping,
+        regime_policies=regime_policies if regime_enabled else None,
     )
