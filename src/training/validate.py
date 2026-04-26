@@ -36,6 +36,10 @@ class ValidationResult:
     mean_returns: list[float]
     log_scales: list[float]
     sigma_values: list[float]
+    timestamps: list[Any]
+    tickers: list[str]
+    directional_sample_count: int
+    total_sample_count: int
 
     def to_dict(self) -> dict[str, Any]:
         output = asdict(self)
@@ -89,6 +93,8 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
     mean_returns: list[float] = []
     log_scales: list[float] = []
     sigma_values: list[float] = []
+    timestamp_values: list[Any] = []
+    ticker_values: list[str] = []
 
     with torch.no_grad():
         for batch in dataloader:
@@ -139,6 +145,22 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
 
             close_values.extend(float(value) for value in batch["close"].detach().cpu().reshape(-1).tolist())
             next_close_values.extend(float(value) for value in batch["next_close"].detach().cpu().reshape(-1).tolist())
+            if "timestamp" in batch:
+                batch_timestamps = batch["timestamp"]
+                if hasattr(batch_timestamps, "detach"):
+                    timestamp_values.extend(batch_timestamps.detach().cpu().reshape(-1).tolist())
+                elif isinstance(batch_timestamps, (list, tuple)):
+                    timestamp_values.extend(list(batch_timestamps))
+                else:
+                    timestamp_values.append(batch_timestamps)
+            if "ticker" in batch:
+                batch_tickers = batch["ticker"]
+                if hasattr(batch_tickers, "detach"):
+                    ticker_values.extend(str(value) for value in batch_tickers.detach().cpu().reshape(-1).tolist())
+                elif isinstance(batch_tickers, (list, tuple)):
+                    ticker_values.extend(str(value) for value in batch_tickers)
+                else:
+                    ticker_values.append(str(batch_tickers))
 
             mean_return = extract_mean_return(outputs)
             if mean_return is not None:
@@ -227,4 +249,8 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
         mean_returns=mean_returns,
         log_scales=log_scales,
         sigma_values=sigma_values,
+        timestamps=timestamp_values,
+        tickers=ticker_values,
+        directional_sample_count=int(len(directional_labels)),
+        total_sample_count=int(len(probabilities)),
     )

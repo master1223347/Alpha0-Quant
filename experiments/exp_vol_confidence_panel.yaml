@@ -49,6 +49,8 @@ model:
   model_name: panel_transformer
   hidden_dims: [256, 128]
   dropout: 0.1
+  multitask_output: true
+  probabilistic_output: true
 
 training:
   epochs: 4

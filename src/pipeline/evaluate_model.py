@@ -75,6 +75,7 @@ def _build_confidence_bucket_summary(
     cost_bps_per_trade: float,
     slippage_bps: float,
     regime_backtest_kwargs: dict[str, Any] | None = None,
+    regime_fit_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from src.evaluation.metrics import compute_classification_metrics
 
@@ -133,6 +134,8 @@ def _build_confidence_bucket_summary(
         down_probabilities=validation.down_probabilities,
         close=validation.close,
         next_close=validation.next_close,
+        timestamps=getattr(validation, "timestamps", None),
+        tickers=getattr(validation, "tickers", None),
         confidence_threshold=0.0,
         top_percentile=float(top_percentile),
         selection_mode="global_abs",
@@ -142,6 +145,7 @@ def _build_confidence_bucket_summary(
         cost_bps_per_trade=cost_bps_per_trade,
         slippage_bps=slippage_bps,
         signal_scores=getattr(validation, "action_scores", None),
+        **(regime_fit_kwargs or {}),
         **(regime_backtest_kwargs or {}),
     )
 
@@ -224,6 +228,67 @@ def _is_binary_labels(values: list[float], *, tol: float = 1e-6) -> bool:
     return True
 
 
+def _extract_binary_labels_for_pos_weight(dataset: Any) -> list[int] | None:
+    for attribute in ("direction_label", "y", "labels", "target"):
+        values = getattr(dataset, attribute, None)
+        if values is None:
+            continue
+        if hasattr(values, "tolist"):
+            raw_values = values.tolist()
+        elif isinstance(values, (list, tuple)):
+            raw_values = list(values)
+        else:
+            continue
+        flattened = [float(value) for value in raw_values]
+        if not _is_binary_labels(flattened):
+            continue
+        return [int(round(value)) for value in flattened]
+    return None
+
+
+def _to_flat_list(values: Any) -> list[Any]:
+    if values is None:
+        return []
+    if hasattr(values, "detach"):
+        return values.detach().cpu().reshape(-1).tolist()
+    if hasattr(values, "reshape") and hasattr(values, "tolist"):
+        try:
+            return values.reshape(-1).tolist()
+        except Exception:
+            pass
+    if hasattr(values, "tolist"):
+        converted = values.tolist()
+        if isinstance(converted, list):
+            return converted
+        return [converted]
+    if isinstance(values, (list, tuple)):
+        return list(values)
+    return [values]
+
+
+def _extract_regime_fit_kwargs(train_loader: Any | None) -> dict[str, Any]:
+    if train_loader is None:
+        return {}
+    dataset = getattr(train_loader, "dataset", None)
+    if dataset is None:
+        return {}
+
+    close_values = [float(value) for value in _to_flat_list(getattr(dataset, "close", None))]
+    next_close_values = [float(value) for value in _to_flat_list(getattr(dataset, "next_close", None))]
+    timestamp_values = _to_flat_list(getattr(dataset, "timestamps", None))
+    ticker_values = [str(value) for value in _to_flat_list(getattr(dataset, "tickers", None))]
+
+    output: dict[str, Any] = {}
+    if close_values and len(close_values) == len(next_close_values):
+        output["regime_fit_close"] = close_values
+        output["regime_fit_next_close"] = next_close_values
+        if timestamp_values and len(timestamp_values) == len(close_values):
+            output["regime_fit_timestamps"] = timestamp_values
+        if ticker_values and len(ticker_values) == len(close_values):
+            output["regime_fit_tickers"] = ticker_values
+    return output
+
+
 def run_evaluation_pipeline(
     *,
     config: ExperimentConfig | None = None,
@@ -245,6 +310,8 @@ def run_evaluation_pipeline(
         test_loader = dataloaders.get("val") or dataloaders.get("train")
     if test_loader is None:
         raise ValueError("No DataLoader available for evaluation")
+    train_loader = dataloaders.get("train")
+    fit_loader = train_loader or dataloaders.get("val")
 
     if checkpoint_path is not None:
         load_checkpoint(path=checkpoint_path, model=model)
@@ -262,12 +329,8 @@ def run_evaluation_pipeline(
     device = torch.device(resolved_device)
     model.to(device)
 
-    pos_weight = None
-    if hasattr(test_loader.dataset, "y"):
-        raw_labels = [float(value) for value in test_loader.dataset.y.tolist()]
-        if _is_binary_labels(raw_labels):
-            labels = [int(round(value)) for value in raw_labels]
-            pos_weight = compute_pos_weight(labels) if labels else None
+    labels_for_weight = _extract_binary_labels_for_pos_weight(test_loader.dataset)
+    pos_weight = compute_pos_weight(labels_for_weight) if labels_for_weight else None
     loss_fn = build_model_loss(
         model,
         pos_weight=pos_weight,
@@ -298,6 +361,7 @@ def run_evaluation_pipeline(
 
     validation = validate_epoch(model, test_loader, loss_fn, device=device)
     regime_backtest_kwargs = _build_regime_backtest_kwargs(config)
+    regime_fit_kwargs = _extract_regime_fit_kwargs(fit_loader)
     selection_mode = str(getattr(config.backtest, "selection_mode", "global_abs")).lower().strip()
     score_source = str(getattr(config.backtest, "score_source", "expected_utility")).lower().strip()
     long_short_percentile = getattr(config.backtest, "long_short_percentile", None)
@@ -311,6 +375,8 @@ def run_evaluation_pipeline(
         down_probabilities=validation.down_probabilities,
         close=validation.close,
         next_close=validation.next_close,
+        timestamps=validation.timestamps,
+        tickers=validation.tickers,
         long_threshold=config.backtest.long_threshold,
         short_threshold=config.backtest.short_threshold,
         confidence_threshold=getattr(config.backtest, "confidence_threshold", None),
@@ -329,6 +395,7 @@ def run_evaluation_pipeline(
         require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),
         confidence_mu_agreement_weight=float(getattr(config.backtest, "confidence_mu_agreement_weight", 0.50)),
         signal_mu_sigma_floor=float(getattr(config.backtest, "signal_mu_sigma_floor", 0.05)),
+        **regime_fit_kwargs,
         **regime_backtest_kwargs,
     )
 
@@ -366,6 +433,7 @@ def run_evaluation_pipeline(
             cost_bps_per_trade=cost_bps_per_trade,
             slippage_bps=slippage_bps,
             regime_backtest_kwargs=regime_backtest_kwargs,
+            regime_fit_kwargs=regime_fit_kwargs,
         )
         for top_percentile in confidence_bucket_sweep
     ]
@@ -405,6 +473,8 @@ def run_evaluation_pipeline(
             down_probabilities=validation.down_probabilities,
             close=validation.close,
             next_close=validation.next_close,
+            timestamps=validation.timestamps,
+            tickers=validation.tickers,
             confidence_threshold=float(threshold),
             top_percentile=float(top_percentile) if top_percentile is not None else None,
             selection_mode=selection_mode,
@@ -421,6 +491,7 @@ def run_evaluation_pipeline(
             require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),
             confidence_mu_agreement_weight=float(getattr(config.backtest, "confidence_mu_agreement_weight", 0.50)),
             signal_mu_sigma_floor=float(getattr(config.backtest, "signal_mu_sigma_floor", 0.05)),
+            **regime_fit_kwargs,
             **regime_backtest_kwargs,
         ).to_dict()
         for threshold in confidence_threshold_sweep

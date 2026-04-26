@@ -36,9 +36,10 @@ def _resolve_device(device_name: str) -> Any:
     return torch.device(device_name)
 
 
-def _score_from_validation(result: ValidationResult) -> float:
+def _score_from_validation_with_floor(result: ValidationResult, *, min_auc_sample_count: int) -> float:
     auc = result.metrics.auc
-    if isinstance(auc, float) and not math.isnan(auc):
+    directional_count = int(getattr(result, "directional_sample_count", 0))
+    if directional_count >= int(max(0, min_auc_sample_count)) and isinstance(auc, float) and not math.isnan(auc):
         return auc
     return result.metrics.accuracy
 
@@ -51,6 +52,25 @@ def _is_binary_labels(values: list[float], *, tol: float = 1e-6) -> bool:
             continue
         return False
     return True
+
+
+def _extract_binary_labels_for_pos_weight(dataset: Any) -> list[int] | None:
+    candidate_attributes = ("direction_label", "y", "labels", "target")
+    for attribute in candidate_attributes:
+        values = getattr(dataset, attribute, None)
+        if values is None:
+            continue
+        if hasattr(values, "tolist"):
+            raw_values = values.tolist()
+        elif isinstance(values, (list, tuple)):
+            raw_values = list(values)
+        else:
+            continue
+        flattened = [float(value) for value in raw_values]
+        if not _is_binary_labels(flattened):
+            continue
+        return [int(round(value)) for value in flattened]
+    return None
 
 
 def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> TrainingArtifacts:
@@ -67,11 +87,8 @@ def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> Trainin
     train_loader = dataloaders["train"]
     val_loader = dataloaders.get("val", train_loader)
 
-    raw_labels = [float(value) for value in train_loader.dataset.y.tolist()]
-    pos_weight = None
-    if _is_binary_labels(raw_labels):
-        labels = [int(round(value)) for value in raw_labels]
-        pos_weight = compute_pos_weight(labels)
+    labels_for_weight = _extract_binary_labels_for_pos_weight(train_loader.dataset)
+    pos_weight = compute_pos_weight(labels_for_weight) if labels_for_weight else None
     loss_fn = build_model_loss(
         model,
         pos_weight=pos_weight,
@@ -117,6 +134,7 @@ def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> Trainin
     best_epoch = -1
     best_score = float("-inf")
     best_validation: ValidationResult | None = None
+    min_auc_sample_count = int(max(0, getattr(config.training, "min_auc_sample_count", 200)))
 
     for epoch in range(1, int(config.training.epochs) + 1):
         model.train()
@@ -141,13 +159,23 @@ def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> Trainin
 
         train_loss = running_loss / batch_count if batch_count > 0 else 0.0
         validation = validate_epoch(model, val_loader, loss_fn, device=device)
-        score = _score_from_validation(validation)
+        score = _score_from_validation_with_floor(validation, min_auc_sample_count=min_auc_sample_count)
+        score_source = (
+            "auc"
+            if int(getattr(validation, "directional_sample_count", 0)) >= min_auc_sample_count
+            and isinstance(validation.metrics.auc, float)
+            and not math.isnan(validation.metrics.auc)
+            else "accuracy"
+        )
 
         epoch_record = {
             "epoch": epoch,
             "train_loss": train_loss,
             "val_loss": validation.loss,
             "val_metrics": validation.metrics.to_dict(),
+            "directional_sample_count": int(getattr(validation, "directional_sample_count", 0)),
+            "total_sample_count": int(getattr(validation, "total_sample_count", 0)),
+            "score_source": score_source,
             "score": score,
         }
         history.append(epoch_record)
@@ -172,7 +200,7 @@ def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> Trainin
 
     if best_validation is None:
         best_validation = validate_epoch(model, val_loader, loss_fn, device=device)
-        best_score = _score_from_validation(best_validation)
+        best_score = _score_from_validation_with_floor(best_validation, min_auc_sample_count=min_auc_sample_count)
         best_epoch = int(config.training.epochs)
 
     return TrainingArtifacts(

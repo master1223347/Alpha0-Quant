@@ -50,6 +50,74 @@ def _std(values: list[float]) -> float:
     return variance**0.5
 
 
+def _normalize_timestamp(value: Any) -> float | str | None:
+    if value is None:
+        return None
+    if hasattr(value, "item"):
+        try:
+            value = value.item()
+        except Exception:
+            pass
+    if hasattr(value, "to_pydatetime"):
+        try:
+            value = value.to_pydatetime()
+        except Exception:
+            pass
+    if hasattr(value, "timestamp"):
+        try:
+            return float(value.timestamp())
+        except Exception:
+            pass
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _build_market_proxy_series(
+    *,
+    close: list[float],
+    next_close: list[float],
+    timestamps: list[Any] | None,
+) -> tuple[list[float | str], list[float], list[float | str]] | None:
+    if timestamps is None or len(timestamps) != len(close) or len(next_close) != len(close):
+        return None
+
+    grouped_returns: dict[float | str, list[float]] = {}
+    normalized_per_sample: list[float | str] = []
+    for index, raw_timestamp in enumerate(timestamps):
+        timestamp = _normalize_timestamp(raw_timestamp)
+        if timestamp is None:
+            normalized_per_sample.append("__missing__")
+            continue
+        normalized_per_sample.append(timestamp)
+        current_close = float(close[index])
+        future_close = float(next_close[index])
+        if current_close > 0 and math.isfinite(current_close) and math.isfinite(future_close):
+            market_return = (future_close - current_close) / current_close
+        else:
+            market_return = 0.0
+        grouped_returns.setdefault(timestamp, []).append(float(market_return))
+
+    if not grouped_returns:
+        return None
+
+    ordered_timestamps = sorted(grouped_returns.keys())
+    proxy_close: list[float] = []
+    level = 1.0
+    for timestamp in ordered_timestamps:
+        proxy_close.append(level)
+        returns = grouped_returns[timestamp]
+        average_return = sum(returns) / len(returns) if returns else 0.0
+        if not math.isfinite(average_return):
+            average_return = 0.0
+        average_return = max(-0.95, float(average_return))
+        level = max(1e-8, level * (1.0 + average_return))
+
+    return ordered_timestamps, proxy_close, normalized_per_sample
+
+
 def run_backtest(
     probabilities: list[float] | None,
     close: list[float],
@@ -57,6 +125,8 @@ def run_backtest(
     *,
     up_probabilities: list[float] | None = None,
     down_probabilities: list[float] | None = None,
+    timestamps: list[Any] | None = None,
+    tickers: list[str] | None = None,
     long_threshold: float = 0.55,
     short_threshold: float = 0.45,
     confidence_threshold: float | None = None,
@@ -83,6 +153,10 @@ def run_backtest(
     mean_reverting_policy: str = "flip",
     volatile_policy: str = "flat",
     volatile_confidence_threshold: float = 0.70,
+    regime_fit_close: list[float] | None = None,
+    regime_fit_next_close: list[float] | None = None,
+    regime_fit_timestamps: list[Any] | None = None,
+    regime_fit_tickers: list[str] | None = None,
 ) -> BacktestReport:
     """Run a threshold-based long/short strategy."""
     if probabilities is None and (up_probabilities is None or down_probabilities is None):
@@ -184,6 +258,9 @@ def run_backtest(
     regime_transition_matrix: list[list[float]] | None = None
     regime_state_mapping: dict[str, str] | None = None
     regime_enabled = bool(enable_regime_adaptation)
+    if regime_enabled and not regime_fit_close:
+        # Avoid fitting regimes on the same stream being traded (forward-look leakage).
+        regime_enabled = False
     regime_policies = {
         "trending": str(trending_policy),
         "mean_reverting": str(mean_reverting_policy),
@@ -192,14 +269,45 @@ def run_backtest(
     }
     if regime_enabled:
         try:
-            regime_result = detect_market_regimes(
+            sample_proxy = _build_market_proxy_series(
                 close=[float(value) for value in close],
-                n_states=int(regime_states),
-                feature_window=int(regime_feature_window),
-                random_state=int(regime_random_state),
+                next_close=[float(value) for value in next_close],
+                timestamps=timestamps,
             )
-            if len(regime_result.regime_sequence) == len(up_probabilities):
-                regime_sequence = list(regime_result.regime_sequence)
+            fit_proxy = _build_market_proxy_series(
+                close=[float(value) for value in (regime_fit_close or [])],
+                next_close=[float(value) for value in (regime_fit_next_close or [])],
+                timestamps=regime_fit_timestamps,
+            )
+            if sample_proxy is not None:
+                ordered_timestamps, proxy_close, sample_timestamp_keys = sample_proxy
+                fit_close_series = fit_proxy[1] if fit_proxy is not None else (regime_fit_close or None)
+                regime_result = detect_market_regimes(
+                    close=proxy_close,
+                    fit_close=[float(value) for value in fit_close_series] if fit_close_series else None,
+                    n_states=int(regime_states),
+                    feature_window=int(regime_feature_window),
+                    random_state=int(regime_random_state),
+                )
+                if len(regime_result.regime_sequence) == len(ordered_timestamps):
+                    regime_by_timestamp = {
+                        ordered_timestamps[index]: regime_name
+                        for index, regime_name in enumerate(regime_result.regime_sequence)
+                    }
+                    regime_sequence = [
+                        regime_by_timestamp.get(timestamp_key, "trending")
+                        for timestamp_key in sample_timestamp_keys
+                    ]
+            else:
+                regime_result = detect_market_regimes(
+                    close=[float(value) for value in close],
+                    fit_close=[float(value) for value in regime_fit_close] if regime_fit_close else None,
+                    n_states=int(regime_states),
+                    feature_window=int(regime_feature_window),
+                    random_state=int(regime_random_state),
+                )
+                if len(regime_result.regime_sequence) == len(up_probabilities):
+                    regime_sequence = list(regime_result.regime_sequence)
             regime_transition_matrix = regime_result.transition_matrix
             regime_state_mapping = {
                 str(int(state)): str(label)

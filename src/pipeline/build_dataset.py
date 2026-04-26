@@ -320,7 +320,6 @@ def build_dataset(
         volatility_label_k=float(getattr(config.targets, "volatility_label_k", 0.25)),
         regression_clip=float(getattr(config.targets, "regression_clip", 3.0)),
     )
-    assign_cross_sectional_rank(labeled_sequences, target_column="next_log_return")
 
     split_mode = config.dataset.split_mode.lower().strip()
     split_sequences = split_ticker_sequences(
@@ -330,6 +329,9 @@ def build_dataset(
         test_ratio=config.dataset.test_ratio,
         split_mode=split_mode,
     )
+    for split_name, ticker_map in split_sequences.items():
+        if ticker_map:
+            assign_cross_sectional_rank(ticker_map, target_column="next_log_return")
     overlap_counts = _validate_split_integrity(
         split_mode=split_mode,
         split_sequences=split_sequences,
@@ -344,11 +346,10 @@ def build_dataset(
     dataset_type = _resolve_dataset_type(config)
     if dataset_type == "panel":
         panel_context_size = _resolve_panel_context_size(config)
-        if config.dataset.panel_context_size is not None and config.dataset.window_size != panel_context_size:
-            # Keep downstream model construction aligned with the panel context tensor.
-            config.dataset.window_size = panel_context_size
+        resolved_window_size = panel_context_size
     else:
         panel_context_size = config.dataset.window_size
+        resolved_window_size = config.dataset.window_size
 
     return_target_key = _resolve_return_target_key(config)
     direction_target_key = _resolve_direction_target_key(config)
@@ -370,7 +371,7 @@ def build_dataset(
         else:
             datasets[split_name] = build_labeled_windows(
                 ticker_sequences,
-                window_size=config.dataset.window_size,
+                window_size=resolved_window_size,
                 stride=config.dataset.stride,
                 feature_columns=feature_artifacts.feature_columns,
                 label_key=config.targets.primary_target,
@@ -420,6 +421,7 @@ def build_dataset(
                 "feature_columns": feature_artifacts.feature_columns,
                 "split_row_counts": split_row_counts,
                 "window_size": config.dataset.window_size,
+                "resolved_window_size": resolved_window_size,
                 "stride": config.dataset.stride,
                 "dataset_type": dataset_type,
                 "split_mode": split_mode,

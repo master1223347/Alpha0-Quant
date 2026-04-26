@@ -79,8 +79,8 @@ class ModelConfig:
     hidden_dims: tuple[int, ...] = (256, 128)
     dropout: float = 0.10
     minn_enabled: bool = False
-    multitask_output: bool = False
-    probabilistic_output: bool = False
+    multitask_output: bool = True
+    probabilistic_output: bool = True
     include_rank_head: bool = False
     include_regime_head: bool = False
     regime_classes: int = 3
@@ -118,6 +118,7 @@ class TrainingConfig:
     cross_sectional_reg_weight: float = 0.0
     cross_sectional_reg_limit: float = 2.5
     calibration_aux_weight: float = 0.0
+    min_auc_sample_count: int = 200
 
 
 @dataclass(slots=True)

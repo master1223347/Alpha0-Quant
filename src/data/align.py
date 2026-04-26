@@ -26,7 +26,7 @@ class SequenceBreak(TypedDict):
 def is_regular_session_timestamp(timestamp: datetime) -> bool:
     """Return True when a timestamp falls inside regular market hours."""
     session_time = timestamp.time()
-    return REGULAR_SESSION_START <= session_time <= REGULAR_SESSION_END
+    return REGULAR_SESSION_START <= session_time < REGULAR_SESSION_END
 
 
 def filter_regular_session(rows: list[OhlcvRow]) -> list[OhlcvRow]:

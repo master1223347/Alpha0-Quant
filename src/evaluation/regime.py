@@ -204,57 +204,60 @@ def _map_states_to_regimes(state_stats: dict[int, dict[str, float]]) -> dict[int
     return mapping
 
 
-def detect_market_regimes(
-    *,
-    close: list[float],
-    n_states: int = 3,
-    feature_window: int = 32,
-    random_state: int = 7,
-) -> RegimeDetectionResult:
-    """Detect per-bar market regimes using KMeans + Gaussian-HMM smoothing."""
+def _returns_from_close(close: list[float]) -> list[float]:
     if not close:
-        raise ValueError("close must be non-empty")
-
-    sample_count = len(close)
-    if sample_count == 1:
-        return RegimeDetectionResult(
-            state_sequence=[0],
-            regime_sequence=["trending"],
-            transition_matrix=[[1.0]],
-            state_to_regime={0: "trending"},
-            state_stats={0: {"count": 1.0, "mean_return": 0.0, "volatility": 0.0, "autocorr_lag1": 0.0, "trend_score": 0.0, "reversion_score": 0.0}},
-        )
-
+        return []
     returns = [0.0]
-    for index in range(1, sample_count):
+    for index in range(1, len(close)):
         prev_close = float(close[index - 1])
         curr_close = float(close[index])
         if prev_close > 0 and math.isfinite(prev_close) and math.isfinite(curr_close):
-            bar_return = (curr_close - prev_close) / prev_close
-            # Guard against cross-symbol boundary jumps in flattened panels.
-            if abs(bar_return) > 0.20:
-                bar_return = 0.0
-            returns.append(bar_return)
+            returns.append((curr_close - prev_close) / prev_close)
         else:
             returns.append(0.0)
+    return returns
 
+
+def _build_features_from_returns(returns: list[float], *, feature_window: int) -> list[list[float]]:
     rolling_vol = _rolling_std(returns, window=max(4, int(feature_window)))
     lag_signal = _lag_product_signal(returns, window=max(4, int(feature_window)))
-
     feature_columns = [
         _zscore_column(returns),
         _zscore_column(rolling_vol),
         _zscore_column(lag_signal),
     ]
-    features = [
+    return [
         [feature_columns[0][index], feature_columns[1][index], feature_columns[2][index]]
-        for index in range(sample_count)
+        for index in range(len(returns))
     ]
 
-    resolved_states = max(1, min(int(n_states), sample_count))
+
+def detect_market_regimes(
+    *,
+    close: list[float],
+    fit_close: list[float] | None = None,
+    n_states: int = 3,
+    feature_window: int = 32,
+    random_state: int = 7,
+) -> RegimeDetectionResult:
+    """Detect per-bar market regimes with optional train-only fitting."""
+    if not close:
+        raise ValueError("close must be non-empty")
+    target_close = [float(value) for value in close]
+    fit_series = [float(value) for value in fit_close] if fit_close else list(target_close)
+
+    target_returns = _returns_from_close(target_close)
+    target_features = _build_features_from_returns(target_returns, feature_window=feature_window)
+    fit_returns = _returns_from_close(fit_series)
+    fit_features = _build_features_from_returns(fit_returns, feature_window=feature_window)
+    if not fit_features or not target_features:
+        raise ValueError("close/fit_close must contain at least one valid sample")
+
+    resolved_states = max(1, min(int(n_states), len(fit_features), len(target_features)))
     if resolved_states == 1:
-        state_sequence = [0 for _ in range(sample_count)]
-        state_stats = _build_state_stats(returns, state_sequence, 1)
+        state_sequence = [0 for _ in range(len(target_features))]
+        fit_state_sequence = [0 for _ in range(len(fit_features))]
+        state_stats = _build_state_stats(fit_returns, fit_state_sequence, 1)
         state_to_regime = {0: "trending"}
         return RegimeDetectionResult(
             state_sequence=state_sequence,
@@ -269,14 +272,16 @@ def detect_market_regimes(
         from sklearn.cluster import KMeans
     except ModuleNotFoundError:
         # Conservative fallback: volatility tertiles as pseudo states.
-        ordered = sorted(range(sample_count), key=lambda index: rolling_vol[index])
+        fit_rolling_vol = _rolling_std(fit_returns, window=max(4, int(feature_window)))
+        sample_count = len(fit_features)
+        ordered = sorted(range(sample_count), key=lambda index: fit_rolling_vol[index])
         labels = [0 for _ in range(sample_count)]
         for rank, index in enumerate(ordered):
             state_id = min(resolved_states - 1, (rank * resolved_states) // sample_count)
             labels[index] = state_id
         cluster_labels = labels
     else:
-        matrix = np.asarray(features, dtype=float)
+        matrix = np.asarray(fit_features, dtype=float)
         kmeans = KMeans(n_clusters=resolved_states, random_state=int(random_state), n_init=10)
         cluster_labels = [int(value) for value in kmeans.fit_predict(matrix).tolist()]
 
@@ -291,9 +296,9 @@ def detect_market_regimes(
 
     means: list[list[float]] = []
     variances: list[list[float]] = []
-    dim = len(features[0])
+    dim = len(fit_features[0])
     for state_id in range(resolved_states):
-        state_points = [features[index] for index, label in enumerate(cluster_labels) if label == state_id]
+        state_points = [fit_features[index] for index, label in enumerate(cluster_labels) if label == state_id]
         if not state_points:
             means.append([0.0 for _ in range(dim)])
             variances.append([1.0 for _ in range(dim)])
@@ -309,14 +314,21 @@ def detect_market_regimes(
         means.append(mean_row)
         variances.append(var_row)
 
-    state_sequence = _viterbi_decode(
-        features=features,
+    fit_state_sequence = _viterbi_decode(
+        features=fit_features,
         priors=priors,
         transition=transition,
         means=means,
         variances=variances,
     )
-    state_stats = _build_state_stats(returns, state_sequence, resolved_states)
+    state_sequence = _viterbi_decode(
+        features=target_features,
+        priors=priors,
+        transition=transition,
+        means=means,
+        variances=variances,
+    )
+    state_stats = _build_state_stats(fit_returns, fit_state_sequence, resolved_states)
     state_to_regime = _map_states_to_regimes(state_stats)
     regime_sequence = [state_to_regime.get(int(state), "trending") for state in state_sequence]
     return RegimeDetectionResult(

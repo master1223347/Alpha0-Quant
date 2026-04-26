@@ -48,7 +48,13 @@ def load_checkpoint(
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError("torch is required for checkpoint loading") from exc
 
-    checkpoint = torch.load(Path(path), map_location=map_location)
+    checkpoint_path = Path(path)
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location=map_location, weights_only=True)
+    except TypeError:
+        checkpoint = torch.load(checkpoint_path, map_location=map_location)
+    if not isinstance(checkpoint, dict) or "model_state_dict" not in checkpoint:
+        raise ValueError(f"Invalid checkpoint payload at {checkpoint_path}")
     model.load_state_dict(checkpoint["model_state_dict"])
     if optimizer is not None and "optimizer_state_dict" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])

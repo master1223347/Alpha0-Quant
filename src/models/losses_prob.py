@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from typing import Any
 
 try:
@@ -373,6 +374,34 @@ if nn is not None:
             self.cross_sectional_reg_weight = float(cross_sectional_reg_weight)
             self.cross_sectional_reg_limit = float(cross_sectional_reg_limit)
             self.calibration_aux_weight = float(calibration_aux_weight)
+            self.requires_dict_outputs = any(
+                weight > 0.0
+                for weight in (
+                    self.threshold_weight,
+                    self.regression_weight,
+                    self.rank_weight,
+                    self.return_rank_weight,
+                    self.regime_weight,
+                    self.score_alignment_weight,
+                    self.volatility_consistency_weight,
+                    self.temporal_smoothness_weight,
+                    self.cross_sectional_reg_weight,
+                    self.calibration_aux_weight,
+                )
+            )
+            self.requires_probabilistic_outputs = any(
+                weight > 0.0
+                for weight in (
+                    self.regression_weight,
+                    self.return_rank_weight,
+                    self.score_alignment_weight,
+                    self.volatility_consistency_weight,
+                    self.temporal_smoothness_weight,
+                    self.cross_sectional_reg_weight,
+                    self.calibration_aux_weight,
+                )
+            )
+            self._warned_missing_temporal_metadata = False
 
             if pos_weight is None:
                 self.pos_weight = None
@@ -396,6 +425,11 @@ if nn is not None:
 
         def forward(self, outputs: Any, targets: Any, batch: dict[str, Any] | None = None) -> Any:
             if not isinstance(outputs, dict):
+                if self.requires_dict_outputs:
+                    raise ValueError(
+                        "Multitask loss weights require dict model outputs, but model returned a single tensor. "
+                        "Enable model.multitask_output."
+                    )
                 logits = outputs.reshape(-1)
                 target_tensor = _resolve_tensor(targets, device=logits.device, dtype=torch.float32).reshape(-1)
                 loss = self.bce(logits, target_tensor)
@@ -427,6 +461,11 @@ if nn is not None:
 
             mean_return = extract_mean_return(outputs)
             log_scale = extract_log_scale(outputs)
+            if self.requires_probabilistic_outputs and mean_return is None:
+                raise ValueError(
+                    "Configured loss weights require mean_return/log_scale heads, but model outputs are missing "
+                    "probabilistic outputs. Enable model.probabilistic_output."
+                )
             if forward_return is not None and mean_return is not None:
                 mean_return = mean_return.reshape(-1)
                 regression_target = forward_return.reshape(-1)
@@ -474,14 +513,26 @@ if nn is not None:
                     components["volatility_consistency_loss"] = float(volatility_penalty.detach().cpu().item())
 
                 if self.temporal_smoothness_weight > 0:
-                    smoothness_penalty = _temporal_smoothness_penalty(
-                        mean_return,
-                        extract_timestamp_values(batch),
-                        extract_ticker_values(batch),
-                        max_gap_seconds=self.temporal_smoothness_max_gap_seconds,
-                    )
-                    total = total + self.temporal_smoothness_weight * smoothness_penalty
-                    components["temporal_smoothness_loss"] = float(smoothness_penalty.detach().cpu().item())
+                    timestamps = extract_timestamp_values(batch)
+                    tickers = extract_ticker_values(batch)
+                    if not timestamps or not tickers or len(timestamps) != mean_return.numel() or len(tickers) != mean_return.numel():
+                        if not self._warned_missing_temporal_metadata:
+                            warnings.warn(
+                                "temporal_smoothness_weight > 0 but batch is missing aligned timestamp/ticker metadata; "
+                                "temporal smoothness regularization is disabled for this run.",
+                                RuntimeWarning,
+                                stacklevel=2,
+                            )
+                            self._warned_missing_temporal_metadata = True
+                    else:
+                        smoothness_penalty = _temporal_smoothness_penalty(
+                            mean_return,
+                            timestamps,
+                            tickers,
+                            max_gap_seconds=self.temporal_smoothness_max_gap_seconds,
+                        )
+                        total = total + self.temporal_smoothness_weight * smoothness_penalty
+                        components["temporal_smoothness_loss"] = float(smoothness_penalty.detach().cpu().item())
 
                 if self.cross_sectional_reg_weight > 0:
                     cross_sectional_penalty = _cross_sectional_extreme_penalty(
@@ -497,6 +548,11 @@ if nn is not None:
                     components["calibration_alignment_loss"] = float(calibration_penalty.detach().cpu().item())
 
             threshold_logits = extract_threshold_logits(outputs)
+            if threshold_logits is None and self.threshold_weight > 0:
+                raise ValueError(
+                    "threshold_loss_weight > 0 but model outputs are missing threshold_logits. "
+                    "Enable model.multitask_output."
+                )
             if threshold_logits is not None:
                 threshold_target = extract_threshold_target(batch, device=device)
                 if threshold_target is None and forward_return is not None:
@@ -559,6 +615,25 @@ def build_model_loss(
         raise ModuleNotFoundError("torch is required to build losses")
 
     multitask_output = bool(getattr(model, "multitask_output", False))
+    requires_multitask = any(
+        weight > 0.0
+        for weight in (
+            float(threshold_weight),
+            float(regression_weight),
+            float(rank_weight),
+            float(return_rank_weight),
+            float(regime_weight),
+            float(score_alignment_weight),
+            float(volatility_consistency_weight),
+            float(temporal_smoothness_weight),
+            float(cross_sectional_reg_weight),
+            float(calibration_aux_weight),
+        )
+    )
+    if requires_multitask and not multitask_output:
+        raise ValueError(
+            "Configured loss weights require multitask model outputs, but model.multitask_output is False."
+        )
     if multitask_output:
         resolved_distribution = distribution or str(getattr(model, "distribution", "gaussian"))
         return ProbabilisticMultitaskLoss(

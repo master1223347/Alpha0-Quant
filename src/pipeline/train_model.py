@@ -34,18 +34,79 @@ class TrainPipelineArtifacts:
         }
 
 
-def _build_model(config: ExperimentConfig, *, num_features: int) -> Any:
+def _requires_multitask_objective(config: ExperimentConfig) -> bool:
+    weighted_terms = (
+        float(getattr(config.training, "threshold_loss_weight", 0.0)),
+        float(getattr(config.training, "regression_loss_weight", 0.0)),
+        float(getattr(config.training, "rank_loss_weight", 0.0)),
+        float(getattr(config.training, "return_rank_weight", 0.0)),
+        float(getattr(config.training, "regime_loss_weight", 0.0)),
+        float(getattr(config.training, "score_alignment_weight", 0.0)),
+        float(getattr(config.training, "volatility_consistency_weight", 0.0)),
+        float(getattr(config.training, "temporal_smoothness_weight", 0.0)),
+        float(getattr(config.training, "cross_sectional_reg_weight", 0.0)),
+        float(getattr(config.training, "calibration_aux_weight", 0.0)),
+    )
+    return any(weight > 0.0 for weight in weighted_terms)
+
+
+def _requires_probabilistic_output(config: ExperimentConfig) -> bool:
+    weighted_terms = (
+        float(getattr(config.training, "regression_loss_weight", 0.0)),
+        float(getattr(config.training, "return_rank_weight", 0.0)),
+        float(getattr(config.training, "score_alignment_weight", 0.0)),
+        float(getattr(config.training, "volatility_consistency_weight", 0.0)),
+        float(getattr(config.training, "temporal_smoothness_weight", 0.0)),
+        float(getattr(config.training, "cross_sectional_reg_weight", 0.0)),
+        float(getattr(config.training, "calibration_aux_weight", 0.0)),
+    )
+    return any(weight > 0.0 for weight in weighted_terms)
+
+
+def _resolve_model_window_size(train_dataset: Any, *, fallback: int) -> int:
+    values = getattr(train_dataset, "X", None)
+    shape = getattr(values, "shape", None)
+    if shape is None or len(shape) < 2:
+        return int(fallback)
+    return int(shape[1])
+
+
+def _build_model(config: ExperimentConfig, *, num_features: int, window_size: int) -> Any:
     model_name = config.model.model_name.lower()
     minn_enabled = bool(getattr(config.model, "minn_enabled", False))
     multitask_output = bool(getattr(config.model, "multitask_output", minn_enabled))
     probabilistic_output = bool(getattr(config.model, "probabilistic_output", minn_enabled))
+    requires_multitask = _requires_multitask_objective(config)
+    requires_probabilistic = _requires_probabilistic_output(config)
+    if requires_multitask and not multitask_output:
+        LOGGER.warning(
+            "Enabling multitask_output for %s because configured training weights require multi-head outputs",
+            config.name,
+        )
+        multitask_output = True
+    if requires_probabilistic and not probabilistic_output:
+        LOGGER.warning(
+            "Enabling probabilistic_output for %s because configured training weights require return distribution heads",
+            config.name,
+        )
+        probabilistic_output = True
+    if probabilistic_output and not multitask_output:
+        LOGGER.warning(
+            "Enabling multitask_output for %s because probabilistic_output requires dict model outputs",
+            config.name,
+        )
+        multitask_output = True
     include_rank_head = bool(getattr(config.model, "include_rank_head", False))
     include_regime_head = bool(getattr(config.model, "include_regime_head", False))
+    if float(getattr(config.training, "rank_loss_weight", 0.0)) > 0.0:
+        include_rank_head = True
+    if float(getattr(config.training, "regime_loss_weight", 0.0)) > 0.0:
+        include_regime_head = True
     regime_classes = int(getattr(config.model, "regime_classes", 3))
     distribution = str(getattr(config.model, "distribution", "gaussian"))
     if model_name in {"baseline", "baseline_mlp", "mlp", "encoder", "encoder_mlp"}:
         return BaselineMLP(
-            window_size=config.dataset.window_size,
+            window_size=window_size,
             num_features=num_features,
             hidden_dims=tuple(config.model.hidden_dims),
             dropout=float(config.model.dropout),
@@ -58,7 +119,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int) -> Any:
         )
     if model_name in {"tcn", "tcn_encoder"}:
         return tcn_encoder(
-            window_size=config.dataset.window_size,
+            window_size=window_size,
             num_features=num_features,
             dropout=float(config.model.dropout),
             multitask_output=multitask_output,
@@ -70,7 +131,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int) -> Any:
         )
     if model_name in {"panel_transformer", "transformer", "minn_transformer"}:
         return panel_transformer(
-            window_size=config.dataset.window_size,
+            window_size=window_size,
             num_features=num_features,
             dropout=float(config.model.dropout),
             multitask_output=multitask_output,
@@ -82,7 +143,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int) -> Any:
         )
     if model_name in {"gnn_panel", "gnn"}:
         return gnn_panel(
-            window_size=config.dataset.window_size,
+            window_size=window_size,
             num_features=num_features,
             dropout=float(config.model.dropout),
             multitask_output=multitask_output,
@@ -117,7 +178,12 @@ def run_training_pipeline(
         num_workers=config.dataset.num_workers,
         shuffle_train=True,
     )
-    model = _build_model(config, num_features=len(dataset_artifacts.feature_columns))
+    model_window_size = _resolve_model_window_size(train_dataset, fallback=int(config.dataset.window_size))
+    model = _build_model(
+        config,
+        num_features=len(dataset_artifacts.feature_columns),
+        window_size=model_window_size,
+    )
     training_artifacts = train_model(config, dataloaders, model)
 
     metrics_path = Path(config.training.metrics_path)

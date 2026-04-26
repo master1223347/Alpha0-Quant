@@ -59,6 +59,35 @@ def _resolve_config_paths(values: list[str]) -> list[str]:
     return deduped
 
 
+def _resolve_result_path(
+    *,
+    config: Any,
+    config_path: str,
+    used_paths: set[Path],
+) -> Path:
+    base_path = Path(config.training.metrics_path).with_name("experiment_result.json")
+    if base_path not in used_paths:
+        used_paths.add(base_path)
+        return base_path
+
+    stem = Path(config_path).stem
+    suffix_index = 1
+    while True:
+        if suffix_index == 1:
+            candidate = base_path.with_name(f"experiment_result_{stem}.json")
+        else:
+            candidate = base_path.with_name(f"experiment_result_{stem}_{suffix_index}.json")
+        if candidate not in used_paths:
+            used_paths.add(candidate)
+            LOGGER.warning(
+                "Duplicate metrics_path detected; writing suite result for %s to %s",
+                config.name,
+                candidate,
+            )
+            return candidate
+        suffix_index += 1
+
+
 def run_experiment_suite(config_paths: list[str]) -> dict[str, Any]:
     configs = [(path, load_experiment_config(path)) for path in config_paths]
     groups: dict[str, list[tuple[str, Any]]] = defaultdict(list)
@@ -66,6 +95,7 @@ def run_experiment_suite(config_paths: list[str]) -> dict[str, Any]:
         groups[_dataset_signature(config)].append((path, config))
 
     suite_results: list[dict[str, Any]] = []
+    used_result_paths: set[Path] = set()
     for group_index, grouped_configs in enumerate(groups.values(), start=1):
         base_path, base_config = grouped_configs[0]
         LOGGER.info(
@@ -94,7 +124,11 @@ def run_experiment_suite(config_paths: list[str]) -> dict[str, Any]:
                 "training": train_artifacts.training.to_dict(),
                 "evaluation_report_path": eval_artifacts.report_path,
             }
-            result_path = Path(config.training.metrics_path).with_name("experiment_result.json")
+            result_path = _resolve_result_path(
+                config=config,
+                config_path=config_path,
+                used_paths=used_result_paths,
+            )
             result_path.parent.mkdir(parents=True, exist_ok=True)
             with result_path.open("w", encoding="utf-8") as handle:
                 json.dump(result, handle, indent=2)
