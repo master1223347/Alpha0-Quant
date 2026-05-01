@@ -1,0 +1,140 @@
+name: minn_plan_full_stack
+
+data:
+  raw_root: data/raw
+  max_tickers: 300
+  min_sequence_length: 40
+  source_timezone: UTC
+  market_timezone: America/New_York
+  corporate_actions_path: null
+
+universe:
+  exchange: null
+  asset_type: null
+  tickers: null
+  max_tickers: 300
+  min_sequence_length: 40
+  membership_path: null
+  include_delisted: true
+
+targets:
+  horizon: 1
+  threshold: 0.001
+  volatility_window: 20
+  zscore_window: 20
+  volatility_label_k: 0.25
+  regression_clip: 3.0
+  primary_target: vol_direction_label
+  threshold_target: vol_direction_label
+  direction_target: label
+  return_target: vol_target_clipped
+
+features:
+  momentum_lookback: 3
+  volatility_window: 5
+  relative_volume_window: 5
+  volume_window: 10
+  normalize: true
+  use_cross_sectional: true
+  use_realized_volatility: true
+  realized_vol_window: 20
+  use_factor_features: true
+  factor_window: 78
+  use_cointegration_features: true
+  cointegration_window: 78
+  cointegration_min_samples: 40
+  cointegration_half_life_clip: 200.0
+
+dataset:
+  window_size: 16
+  stride: 1
+  label_horizon: 1
+  split_mode: global_time
+  dataset_type: panel
+  panel_context_size: 16
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  batch_size: 256
+  num_workers: 0
+
+model:
+  model_name: panel_transformer
+  hidden_dims: [256, 128]
+  dropout: 0.1
+  minn_enabled: true
+  multitask_output: true
+  probabilistic_output: true
+  include_rank_head: true
+  include_regime_head: false
+  distribution: student_t
+
+training:
+  epochs: 8
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  scheduler_name: cosine
+  scheduler_step_size: 4
+  scheduler_gamma: 0.5
+  device: auto
+  seed: 42
+  checkpoint_dir: models/checkpoints/minn_plan_full
+  log_path: models/logs/minn_plan_full/training_log.json
+  metrics_path: models/logs/minn_plan_full/metrics.json
+  direction_loss_weight: 0.0
+  threshold_loss_weight: 0.8
+  regression_loss_weight: 0.2
+  rank_loss_weight: 0.1
+  regime_loss_weight: 0.0
+  return_rank_weight: 0.1
+  regression_loss: nll
+  student_t_df: 3.0
+  score_alignment_weight: 0.1
+  volatility_consistency_weight: 0.1
+  temporal_smoothness_weight: 0.05
+  cross_sectional_reg_weight: 0.05
+  calibration_aux_weight: 0.05
+
+backtest:
+  long_threshold: 0.60
+  short_threshold: 0.40
+  confidence_threshold: 0.60
+  top_percentile: null
+  confidence_threshold_sweep: [0.55, 0.60, 0.65, 0.70]
+  confidence_top_percent_sweep: [0.05, 0.10, 0.20]
+  periods_per_year: 19656
+  execution_lag_bars: 1
+  split_mode: global_time
+  flip_positions: false
+  include_costs: true
+  cost_bps_per_trade: 1.0
+  slippage_bps: 0.5
+  signal_source: confidence_plus_mu
+  score_source: expected_utility
+  selection_mode: global_abs
+  enable_regime_adaptation: true
+  regime_states: 3
+  regime_feature_window: 32
+  trending_policy: follow
+  mean_reverting_policy: flip
+  volatile_policy: flat
+
+evaluation:
+  walk_forward_enabled: true
+  walk_forward_train_days: 252
+  walk_forward_val_days: 63
+  walk_forward_test_days: 21
+  walk_forward_step_days: 21
+  walk_forward_embargo_bars: 78
+  use_temperature_scaling: true
+  calibration_bins: 10
+  run_selection_bias_tests: true
+  reality_check_bootstrap: 500
+  spa_bootstrap: 500
+  fdr_alpha: 0.10
+  candidate_metric_keys: [metrics.auc, backtest.sharpe, backtest.pnl]
+
+deployment:
+  export_format: torch_export
+  export_path: models/exports/minn_plan_full.pt2
+  allow_deprecated_torchscript: false

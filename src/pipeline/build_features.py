@@ -10,13 +10,16 @@ from typing import Any
 from src.config.default_config import ExperimentConfig, get_default_config, guess_raw_root
 from src.data.align import align_ticker_rows
 from src.data.cleaner import clean_ohlcv_rows
+from src.data.corporate_actions import apply_corporate_actions
 from src.data.discover import TickerFile, discover_tickers
 from src.data.loader import OhlcvRow, load_ticker_file
 from src.data.validator import validate_feature_rows, validate_ohlcv_rows
 from src.features.base_features import build_base_features
 from src.features.cross_sectional import apply_cross_sectional_features
 from src.features.cross_sectional import cross_sectional_feature_columns
+from src.features.factor_cointegration import apply_factor_cointegration_features
 from src.features.market_features import build_market_features
+from src.features.advanced_volatility import build_realized_volatility_features
 from src.features.time_features import build_time_features
 from src.features.volume_features import build_volume_features
 from src.utils.logger import get_logger
@@ -52,6 +55,13 @@ def _merge_feature_rows(rows: list[OhlcvRow], config: ExperimentConfig) -> list[
     volume = build_volume_features(rows, window=config.features.volume_window)
     market = build_market_features(rows)
     time_rows = build_time_features(rows)
+    if bool(getattr(config.features, "use_realized_volatility", True)):
+        realized_vol = build_realized_volatility_features(
+            rows,
+            window=int(getattr(config.features, "realized_vol_window", 20)),
+        )
+    else:
+        realized_vol = []
 
     if not base or not volume or not market or not time_rows:
         return []
@@ -60,6 +70,7 @@ def _merge_feature_rows(rows: list[OhlcvRow], config: ExperimentConfig) -> list[
     volume_map = _index_rows_by_timestamp(volume)
     market_map = _index_rows_by_timestamp(market)
     time_map = _index_rows_by_timestamp(time_rows)
+    realized_vol_map = _index_rows_by_timestamp(realized_vol) if realized_vol else {}
     ohlcv_map = {row["timestamp"]: row for row in rows}
 
     common_timestamps = (
@@ -69,6 +80,8 @@ def _merge_feature_rows(rows: list[OhlcvRow], config: ExperimentConfig) -> list[
         .intersection(time_map.keys())
         .intersection(ohlcv_map.keys())
     )
+    if realized_vol_map:
+        common_timestamps = common_timestamps.intersection(realized_vol_map.keys())
     merged: list[dict[str, Any]] = []
     for timestamp in sorted(common_timestamps):
         ohlcv = ohlcv_map[timestamp]
@@ -80,6 +93,7 @@ def _merge_feature_rows(rows: list[OhlcvRow], config: ExperimentConfig) -> list[
                 **{k: v for k, v in volume_map[timestamp].items() if k != "timestamp"},
                 **{k: v for k, v in market_map[timestamp].items() if k != "timestamp"},
                 **{k: v for k, v in time_map[timestamp].items() if k != "timestamp"},
+                **({k: v for k, v in realized_vol_map[timestamp].items() if k != "timestamp"} if realized_vol_map else {}),
             }
         )
     return merged
@@ -95,12 +109,55 @@ def _use_cross_sectional_features(config: ExperimentConfig) -> bool:
     return bool(getattr(config.features, "use_cross_sectional", True))
 
 
+def _load_membership_tickers(path: str | None) -> set[str] | None:
+    if not path:
+        return None
+    file_path = Path(path)
+    if not file_path.exists():
+        LOGGER.warning("Universe membership path %s not found; skipping membership filter", file_path)
+        return None
+
+    records: list[dict[str, Any]] = []
+    try:
+        if file_path.suffix.lower() == ".csv":
+            import csv
+
+            with file_path.open("r", newline="", encoding="utf-8") as handle:
+                records = [row for row in csv.DictReader(handle)]
+        else:
+            import pandas as pd
+
+            frame = pd.read_parquet(file_path) if file_path.suffix.lower() in {".parquet", ".pq"} else pd.read_csv(file_path)
+            records = frame.to_dict(orient="records")
+    except Exception as exc:
+        LOGGER.warning("Failed to read universe membership file %s: %s", file_path, exc)
+        return None
+
+    tickers: set[str] = set()
+    for record in records:
+        value = record.get("ticker") or record.get("symbol")
+        if value is None:
+            continue
+        active = record.get("active")
+        if active is not None:
+            active_value = str(active).strip().lower()
+            if active_value in {"0", "false", "no"}:
+                continue
+        tickers.add(str(value).upper())
+    return tickers or None
+
+
 def build_features_for_ticker(ticker_file: TickerFile, config: ExperimentConfig) -> list[list[dict[str, Any]]]:
     """Build merged feature sequences for a single ticker file."""
     raw_rows = load_ticker_file(ticker_file.path)
     validate_ohlcv_rows(raw_rows, stage=f"{ticker_file.ticker}_loaded", raise_on_error=True)
 
     cleaned_rows = clean_ohlcv_rows(raw_rows)
+    cleaned_rows = apply_corporate_actions(
+        cleaned_rows,
+        ticker=ticker_file.ticker,
+        actions_path=getattr(config.data, "corporate_actions_path", None),
+    )
     validate_ohlcv_rows(cleaned_rows, stage=f"{ticker_file.ticker}_cleaned", raise_on_error=True)
 
     aligned_sequences = align_ticker_rows(
@@ -175,6 +232,9 @@ def build_feature_store(
     resolved_exchange = exchange if exchange is not None else config.universe.exchange
     resolved_asset_type = asset_type if asset_type is not None else config.universe.asset_type
     ticker_files = discover_tickers(raw_root=raw_root, exchange=resolved_exchange, asset_type=resolved_asset_type)
+    membership_tickers = _load_membership_tickers(getattr(config.universe, "membership_path", None))
+    if membership_tickers:
+        ticker_files = [ticker_file for ticker_file in ticker_files if ticker_file.ticker.upper() in membership_tickers]
 
     if config.universe.tickers:
         allowed = {ticker.upper() for ticker in config.universe.tickers}
@@ -205,6 +265,21 @@ def build_feature_store(
             base_feature_columns = _feature_columns_from_sequence(sequences[0])
 
     flattened_rows = [row for sequences in ticker_sequences.values() for sequence in sequences for row in sequence]
+    if flattened_rows and (
+        bool(getattr(config.features, "use_factor_features", True))
+        or bool(getattr(config.features, "use_cointegration_features", True))
+    ):
+        apply_factor_cointegration_features(
+            flattened_rows,
+            use_factor_features=bool(getattr(config.features, "use_factor_features", True)),
+            use_cointegration_features=bool(getattr(config.features, "use_cointegration_features", True)),
+            factor_window=int(getattr(config.features, "factor_window", 78)),
+            cointegration_window=int(getattr(config.features, "cointegration_window", 78)),
+            min_samples=int(getattr(config.features, "cointegration_min_samples", 40)),
+            half_life_clip=float(getattr(config.features, "cointegration_half_life_clip", 200.0)),
+        )
+        base_feature_columns = _feature_columns_from_sequence(flattened_rows[:1])
+
     use_cross_sectional = _use_cross_sectional_features(config)
     if flattened_rows and base_feature_columns and use_cross_sectional:
         apply_cross_sectional_features(flattened_rows, feature_columns=base_feature_columns)

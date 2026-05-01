@@ -24,6 +24,16 @@ Single command entrypoint:
 .venv/bin/python -m src.pipeline.run_experiment --config experiments/exp_vol_confidence_panel.yaml
 ```
 
+Optional overrides:
+
+```bash
+.venv/bin/python -m src.pipeline.run_experiment \
+  --config experiments/exp_plan_full.yaml \
+  --split_mode global_time \
+  --walk_forward true \
+  --embargo_bars 78
+```
+
 Batch runner with dataset reuse across compatible configs:
 
 ```bash
@@ -42,10 +52,13 @@ Pipeline stages:
 9. Train model (`src/pipeline/train_model.py`)
 10. Evaluate + backtest + confidence sweeps (`src/pipeline/evaluate_model.py`)
 11. Persist artifacts (`metrics.json`, `evaluation_report.json`, `backtest.json`, `experiment_result.json`)
+12. Optional walk-forward + embargo diagnostics, calibration post-processing, and selection-bias controls
 
 The feature pipeline now supports timezone normalization before regular-session filtering:
 - `data.source_timezone` (default `UTC`)
 - `data.market_timezone` (default `America/New_York`)
+- optional corporate-action split adjustments via `data.corporate_actions_path`
+- optional as-of universe membership filtering via `universe.membership_path`
 
 ## Data Contract
 
@@ -69,6 +82,8 @@ Built in `src/targets/labeling.py`:
 - `vol_direction_label`: `0=down`, `1=neutral`, `2=up`
 - `threshold_label`: fixed-threshold ternary label
 - `cross_sectional_rank`: same-timestamp cross-sectional rank target
+- realized-volatility features (close-to-close, Parkinson, Garman-Klass) can be enabled in `features.*`
+- factor/cointegration proxy features can be enabled in `features.*`
 
 Default target config (`src/config/default_config.py`):
 - `primary_target: vol_direction_label`
@@ -122,6 +137,13 @@ Validation/evaluation flow (`src/training/validate.py`, `src/pipeline/evaluate_m
 - compute directional metrics on non-neutral subset
 - build confidence buckets (default top 5%, 10%, 20%)
 - run confidence-threshold sweeps (default 0.55, 0.60, 0.65, 0.70)
+- optional temperature scaling diagnostics (`evaluation.use_temperature_scaling`)
+- optional selection-bias controls (`evaluation.run_selection_bias_tests`):
+  - deflated Sharpe summary
+  - White Reality Check bootstrap p-value
+  - Hansen SPA bootstrap p-value
+  - Benjamini-Hochberg FDR on candidate strategy p-values
+- optional walk-forward diagnostics with embargo (`evaluation.walk_forward_*`)
 
 Backtest (`src/evaluation/backtest.py`) supports:
 - long/short threshold mode
@@ -192,6 +214,7 @@ Other configs available in `experiments/` include:
 - `exp_minn_tcn.yaml`
 - `exp_minn_gnn.yaml`
 - `exp_vol_confidence_regime.yaml`
+- `exp_plan_full.yaml` (full PLAN-aligned stack toggles)
 
 ## Main Artifacts
 

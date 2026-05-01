@@ -23,6 +23,7 @@ class DataConfig:
     min_required_train_rows: int = 0
     min_required_tickers: int = 0
     min_required_history_days: int = 0
+    corporate_actions_path: str | None = None
 
 
 @dataclass(slots=True)
@@ -32,6 +33,8 @@ class UniverseConfig:
     tickers: tuple[str, ...] | None = None
     max_tickers: int | None = None
     min_sequence_length: int | None = None
+    membership_path: str | None = None
+    include_delisted: bool = True
 
 
 @dataclass(slots=True)
@@ -56,6 +59,14 @@ class FeatureConfig:
     volume_window: int = 10
     normalize: bool = True
     use_cross_sectional: bool = True
+    use_realized_volatility: bool = True
+    realized_vol_window: int = 20
+    use_factor_features: bool = True
+    factor_window: int = 78
+    use_cointegration_features: bool = True
+    cointegration_window: int = 78
+    cointegration_min_samples: int = 40
+    cointegration_half_life_clip: float = 200.0
 
 
 @dataclass(slots=True)
@@ -154,6 +165,30 @@ class BacktestConfig:
 
 
 @dataclass(slots=True)
+class EvaluationConfig:
+    walk_forward_enabled: bool = False
+    walk_forward_train_days: int = 252
+    walk_forward_val_days: int = 63
+    walk_forward_test_days: int = 21
+    walk_forward_step_days: int = 21
+    walk_forward_embargo_bars: int = 0
+    use_temperature_scaling: bool = False
+    calibration_bins: int = 10
+    run_selection_bias_tests: bool = False
+    reality_check_bootstrap: int = 500
+    spa_bootstrap: int = 500
+    fdr_alpha: float = 0.10
+    candidate_metric_keys: tuple[str, ...] = ("metrics.auc", "backtest.sharpe", "backtest.pnl")
+
+
+@dataclass(slots=True)
+class DeploymentConfig:
+    export_format: str = "none"
+    export_path: str = "models/exports/model_export.pt2"
+    allow_deprecated_torchscript: bool = False
+
+
+@dataclass(slots=True)
 class ExperimentConfig:
     name: str = "baseline"
     data: DataConfig = field(default_factory=DataConfig)
@@ -164,6 +199,8 @@ class ExperimentConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    deployment: DeploymentConfig = field(default_factory=DeploymentConfig)
 
 
 def get_default_config(name: str = "baseline") -> ExperimentConfig:

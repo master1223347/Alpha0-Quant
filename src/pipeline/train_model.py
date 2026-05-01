@@ -71,6 +71,77 @@ def _resolve_model_window_size(train_dataset: Any, *, fallback: int) -> int:
     return int(shape[1])
 
 
+def _build_example_input(train_dataset: Any) -> Any | None:
+    values = getattr(train_dataset, "X", None)
+    if values is None:
+        return None
+    try:
+        import torch
+    except ModuleNotFoundError:
+        return None
+    try:
+        if hasattr(values, "__getitem__") and len(values) > 0:
+            sample = values[0]
+        else:
+            return None
+        tensor = torch.as_tensor(sample, dtype=torch.float32)
+        if tensor.dim() == 2:
+            tensor = tensor.unsqueeze(0)
+        elif tensor.dim() == 1:
+            tensor = tensor.unsqueeze(0).unsqueeze(0)
+        return tensor
+    except Exception:
+        return None
+
+
+def _export_trained_model(config: ExperimentConfig, *, model: Any, train_dataset: Any) -> str | None:
+    export_format = str(getattr(config.deployment, "export_format", "none")).strip().lower()
+    if export_format in {"", "none", "off", "disabled"}:
+        return None
+
+    try:
+        import torch
+    except ModuleNotFoundError:
+        LOGGER.warning("Skipping model export because torch is unavailable")
+        return None
+
+    example = _build_example_input(train_dataset)
+    if example is None:
+        LOGGER.warning("Skipping model export because example input could not be derived from train dataset")
+        return None
+
+    export_path = Path(str(getattr(config.deployment, "export_path", "models/exports/model_export.pt2")))
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    model.eval()
+
+    if export_format == "torchscript":
+        if not bool(getattr(config.deployment, "allow_deprecated_torchscript", False)):
+            LOGGER.warning(
+                "Skipping TorchScript export because allow_deprecated_torchscript is False "
+                "(TorchScript is deprecated in favor of torch.export)."
+            )
+            return None
+        scripted = torch.jit.trace(model, example)
+        scripted.save(str(export_path))
+        LOGGER.info("Exported TorchScript artifact to %s", export_path)
+        return str(export_path)
+
+    if export_format in {"torch_export", "export", "pt2"}:
+        if not hasattr(torch, "export") or not hasattr(torch.export, "export"):
+            LOGGER.warning("Skipping torch.export artifact because current torch build lacks torch.export APIs")
+            return None
+        exported_program = torch.export.export(model, (example,))
+        if hasattr(torch.export, "save"):
+            torch.export.save(exported_program, str(export_path))
+        else:
+            raise RuntimeError("torch.export.save is unavailable in current torch build")
+        LOGGER.info("Exported torch.export artifact to %s", export_path)
+        return str(export_path)
+
+    LOGGER.warning("Unknown deployment.export_format=%s; skipping export", export_format)
+    return None
+
+
 def _build_model(config: ExperimentConfig, *, num_features: int, window_size: int) -> Any:
     model_name = config.model.model_name.lower()
     minn_enabled = bool(getattr(config.model, "minn_enabled", False))
@@ -185,6 +256,7 @@ def run_training_pipeline(
         window_size=model_window_size,
     )
     training_artifacts = train_model(config, dataloaders, model)
+    _export_trained_model(config, model=model, train_dataset=train_dataset)
 
     metrics_path = Path(config.training.metrics_path)
     metrics_path.parent.mkdir(parents=True, exist_ok=True)

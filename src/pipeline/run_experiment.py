@@ -37,9 +37,21 @@ def load_experiment_config(path: str | Path) -> Any:
     return apply_overrides(config, overrides)
 
 
-def run_experiment(config_path: str | Path) -> dict[str, Any]:
+def run_experiment(
+    config_path: str | Path,
+    *,
+    split_mode: str | None = None,
+    walk_forward: bool | None = None,
+    embargo_bars: int | None = None,
+) -> dict[str, Any]:
     """Run training + evaluation and return serializable artifacts."""
     config = load_experiment_config(config_path)
+    if split_mode is not None:
+        config.dataset.split_mode = str(split_mode)
+    if walk_forward is not None:
+        config.evaluation.walk_forward_enabled = bool(walk_forward)
+    if embargo_bars is not None:
+        config.evaluation.walk_forward_embargo_bars = int(max(0, embargo_bars))
     LOGGER.info("Running experiment %s", config.name)
     train_artifacts = run_training_pipeline(config=config)
     eval_artifacts = run_evaluation_pipeline(
@@ -66,12 +78,28 @@ def run_experiment(config_path: str | Path) -> dict[str, Any]:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Alpha0 experiment from YAML config")
     parser.add_argument("--config", required=True, help="Path to experiment YAML file")
+    parser.add_argument("--split_mode", default=None, choices=["global_time", "per_ticker"], help="Optional split mode override")
+    parser.add_argument(
+        "--walk_forward",
+        default=None,
+        choices=["true", "false"],
+        help="Enable/disable walk-forward evaluation override",
+    )
+    parser.add_argument("--embargo_bars", type=int, default=None, help="Optional walk-forward embargo bars override")
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
-    run_experiment(args.config)
+    walk_forward = None
+    if args.walk_forward is not None:
+        walk_forward = str(args.walk_forward).strip().lower() == "true"
+    run_experiment(
+        args.config,
+        split_mode=args.split_mode,
+        walk_forward=walk_forward,
+        embargo_bars=args.embargo_bars,
+    )
 
 
 if __name__ == "__main__":

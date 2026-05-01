@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+from datetime import date, datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,8 +13,11 @@ from src.config.default_config import ExperimentConfig, get_default_config
 from src.dataset.dataloader import create_dataloaders
 from src.evaluation.analysis import EvaluationReport, build_evaluation_report, save_evaluation_report
 from src.evaluation.backtest import run_backtest
+from src.evaluation.calibration import fit_temperature_scaling
+from src.evaluation.metrics import compute_classification_metrics
 from src.models.losses import compute_pos_weight
 from src.models.losses_prob import build_model_loss
+from src.evaluation.stat_tests import benjamini_hochberg, deflated_sharpe_ratio, hansen_spa_test, white_reality_check
 from src.training.checkpoint import load_checkpoint
 from src.training.validate import validate_epoch
 from src.utils.logger import get_logger
@@ -266,6 +271,225 @@ def _to_flat_list(values: Any) -> list[Any]:
     return [values]
 
 
+def _mean(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
+
+
+def _equity_curve_to_returns(curve: list[float] | None) -> list[float]:
+    if not curve or len(curve) < 2:
+        return []
+    output: list[float] = []
+    for previous, current in zip(curve[:-1], curve[1:]):
+        prev_value = float(previous)
+        curr_value = float(current)
+        if prev_value <= 0 or not math.isfinite(prev_value) or not math.isfinite(curr_value):
+            output.append(0.0)
+        else:
+            output.append((curr_value / prev_value) - 1.0)
+    return output
+
+
+def _normal_positive_mean_pvalue(values: list[float]) -> float:
+    if len(values) < 2:
+        return float("nan")
+    mean_value = sum(values) / len(values)
+    variance = sum((value - mean_value) ** 2 for value in values) / max(1, len(values) - 1)
+    std_error = math.sqrt(max(variance, 1e-12)) / math.sqrt(len(values))
+    if std_error <= 1e-12:
+        return 1.0 if mean_value <= 0 else 0.0
+    z = mean_value / std_error
+    from statistics import NormalDist
+
+    return 1.0 - NormalDist().cdf(z)
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if hasattr(value, "to_pydatetime"):
+        try:
+            return value.to_pydatetime()
+        except Exception:
+            return None
+    if hasattr(value, "timestamp"):
+        try:
+            return datetime.fromtimestamp(float(value.timestamp()))
+        except Exception:
+            return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value))
+        except Exception:
+            return None
+    if isinstance(value, str):
+        for parser in (datetime.fromisoformat,):
+            try:
+                return parser(value)
+            except Exception:
+                continue
+        return None
+    return None
+
+
+def _build_walk_forward_windows(
+    unique_days: list[date],
+    *,
+    train_days: int,
+    val_days: int,
+    test_days: int,
+    step_days: int,
+) -> list[tuple[date, date]]:
+    windows: list[tuple[date, date]] = []
+    if not unique_days:
+        return windows
+    train_days = max(1, int(train_days))
+    val_days = max(0, int(val_days))
+    test_days = max(1, int(test_days))
+    step_days = max(1, int(step_days))
+
+    index = 0
+    while True:
+        test_start_index = index + train_days + val_days
+        test_end_index = test_start_index + test_days - 1
+        if test_end_index >= len(unique_days):
+            break
+        windows.append((unique_days[test_start_index], unique_days[test_end_index]))
+        index += step_days
+    return windows
+
+
+def _walk_forward_summary(
+    *,
+    config: ExperimentConfig,
+    validation: Any,
+    cost_bps_per_trade: float,
+    slippage_bps: float,
+    regime_fit_kwargs: dict[str, Any],
+    regime_backtest_kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    timestamps = getattr(validation, "timestamps", None) or []
+    parsed_timestamps = [_coerce_datetime(value) for value in timestamps]
+    rows: list[dict[str, Any]] = []
+    for index, timestamp in enumerate(parsed_timestamps):
+        if timestamp is None:
+            continue
+        if index >= len(validation.probabilities):
+            continue
+        rows.append(
+            {
+                "index": index,
+                "timestamp": timestamp,
+                "date": timestamp.date(),
+            }
+        )
+    if not rows:
+        return {"enabled": True, "error": "missing or invalid timestamps for walk-forward"}
+
+    rows.sort(key=lambda item: (item["timestamp"], item["index"]))
+    unique_days = sorted({entry["date"] for entry in rows})
+    windows = _build_walk_forward_windows(
+        unique_days,
+        train_days=int(getattr(config.evaluation, "walk_forward_train_days", 252)),
+        val_days=int(getattr(config.evaluation, "walk_forward_val_days", 63)),
+        test_days=int(getattr(config.evaluation, "walk_forward_test_days", 21)),
+        step_days=int(getattr(config.evaluation, "walk_forward_step_days", 21)),
+    )
+    if not windows:
+        return {"enabled": True, "error": "not enough history to form walk-forward windows"}
+
+    embargo_bars = int(max(0, getattr(config.evaluation, "walk_forward_embargo_bars", 0)))
+    window_reports: list[dict[str, Any]] = []
+    for start_day, end_day in windows:
+        selected = [entry for entry in rows if start_day <= entry["date"] <= end_day]
+        if embargo_bars > 0 and len(selected) > embargo_bars:
+            selected = selected[embargo_bars:]
+        indices = [entry["index"] for entry in selected]
+        if not indices:
+            continue
+
+        probabilities = [float(validation.probabilities[index]) for index in indices]
+        labels = [int(validation.labels[index]) for index in indices] if len(validation.labels) > max(indices) else []
+        close = [float(validation.close[index]) for index in indices]
+        next_close = [float(validation.next_close[index]) for index in indices]
+        up_probs = [float(validation.up_probabilities[index]) for index in indices] if len(validation.up_probabilities) > max(indices) else None
+        down_probs = [float(validation.down_probabilities[index]) for index in indices] if len(validation.down_probabilities) > max(indices) else None
+        window_timestamps = [validation.timestamps[index] for index in indices] if len(validation.timestamps) > max(indices) else None
+        window_tickers = [validation.tickers[index] for index in indices] if len(validation.tickers) > max(indices) else None
+        mu_values = [float(validation.mean_returns[index]) for index in indices] if len(validation.mean_returns) > max(indices) else None
+        sigma_values = [float(validation.sigma_values[index]) for index in indices] if len(validation.sigma_values) > max(indices) else None
+        action_scores = [float(validation.action_scores[index]) for index in indices] if len(validation.action_scores) > max(indices) else None
+
+        backtest = run_backtest(
+            probabilities=probabilities,
+            up_probabilities=up_probs,
+            down_probabilities=down_probs,
+            close=close,
+            next_close=next_close,
+            timestamps=window_timestamps,
+            tickers=window_tickers,
+            long_threshold=config.backtest.long_threshold,
+            short_threshold=config.backtest.short_threshold,
+            confidence_threshold=getattr(config.backtest, "confidence_threshold", None),
+            top_percentile=getattr(config.backtest, "top_percentile", None),
+            selection_mode=str(getattr(config.backtest, "selection_mode", "global_abs")).lower().strip(),
+            long_short_percentile=float(getattr(config.backtest, "long_short_percentile", None))
+            if getattr(config.backtest, "long_short_percentile", None) is not None
+            else None,
+            periods_per_year=int(config.backtest.periods_per_year),
+            execution_lag_bars=int(getattr(config.backtest, "execution_lag_bars", 1)),
+            flip_positions=bool(getattr(config.backtest, "flip_positions", False)),
+            cost_bps_per_trade=float(cost_bps_per_trade),
+            slippage_bps=float(slippage_bps),
+            signal_source=str(getattr(config.backtest, "signal_source", "classification_prob")),
+            signal_scores=action_scores,
+            mu_values=mu_values,
+            sigma_values=sigma_values,
+            require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),
+            confidence_mu_agreement_weight=float(getattr(config.backtest, "confidence_mu_agreement_weight", 0.50)),
+            signal_mu_sigma_floor=float(getattr(config.backtest, "signal_mu_sigma_floor", 0.05)),
+            **regime_fit_kwargs,
+            **regime_backtest_kwargs,
+        )
+
+        if labels and len(labels) == len(probabilities):
+            metrics = compute_classification_metrics(
+                labels,
+                probabilities,
+                calibration_bins=int(getattr(config.evaluation, "calibration_bins", 10)),
+            )
+            metrics_dict = metrics.to_dict()
+        else:
+            metrics_dict = {"accuracy": float("nan"), "auc": float("nan"), "ece": float("nan"), "brier_score": float("nan")}
+
+        window_reports.append(
+            {
+                "test_start_day": start_day.isoformat(),
+                "test_end_day": end_day.isoformat(),
+                "sample_count": len(indices),
+                "metrics": metrics_dict,
+                "backtest": backtest.to_dict(),
+            }
+        )
+
+    if not window_reports:
+        return {"enabled": True, "error": "no walk-forward windows with usable samples"}
+
+    avg_sharpe = _mean([float(item["backtest"]["sharpe"]) for item in window_reports])
+    avg_auc_values = [float(item["metrics"].get("auc", float("nan"))) for item in window_reports]
+    finite_auc = [value for value in avg_auc_values if math.isfinite(value)]
+    return {
+        "enabled": True,
+        "window_count": len(window_reports),
+        "avg_sharpe": float(avg_sharpe),
+        "avg_auc": float(_mean(finite_auc)) if finite_auc else float("nan"),
+        "windows": window_reports,
+    }
+
+
 def _extract_regime_fit_kwargs(train_loader: Any | None) -> dict[str, Any]:
     if train_loader is None:
         return {}
@@ -454,6 +678,26 @@ def run_evaluation_pipeline(
             "directional_hit_rate": float(high_conf_hit),
         }
 
+    if bool(getattr(config.evaluation, "use_temperature_scaling", False)):
+        calibration_labels = validation.labels
+        calibration_probabilities = validation.probabilities
+        if validation.three_class_labels and len(validation.three_class_labels) == len(validation.probabilities):
+            directional_indices = [index for index, label in enumerate(validation.three_class_labels) if label != 1]
+            calibration_labels = [1 if validation.three_class_labels[index] == 2 else 0 for index in directional_indices]
+            calibration_probabilities = [validation.probabilities[index] for index in directional_indices]
+        if calibration_labels and len(calibration_labels) == len(calibration_probabilities):
+            calibration_result = fit_temperature_scaling(
+                labels=[int(value) for value in calibration_labels],
+                probabilities=[float(value) for value in calibration_probabilities],
+            )
+            report.metrics["temperature_scaling"] = {
+                "temperature": float(calibration_result.temperature),
+                "nll_before": float(calibration_result.nll_before),
+                "nll_after": float(calibration_result.nll_after),
+                "brier_before": float(calibration_result.brier_before),
+                "brier_after": float(calibration_result.brier_after),
+            }
+
     confidence_threshold_sweep = _float_sequence(
         getattr(config.backtest, "confidence_threshold_sweep", None),
         fallback=(0.55, 0.60, 0.65, 0.70),
@@ -496,6 +740,63 @@ def run_evaluation_pipeline(
         ).to_dict()
         for threshold in confidence_threshold_sweep
     }
+
+    if bool(getattr(config.evaluation, "run_selection_bias_tests", False)):
+        strategy_curves: list[list[float]] = []
+        trial_sharpes: list[float] = [float(backtest.sharpe)]
+        primary_returns = _equity_curve_to_returns(backtest.equity_curve)
+        if primary_returns:
+            strategy_curves.append(primary_returns)
+        for payload in report.backtest["confidence_threshold_sweep"].values():
+            sharpe_value = payload.get("sharpe")
+            if isinstance(sharpe_value, (float, int)):
+                trial_sharpes.append(float(sharpe_value))
+            curve = payload.get("equity_curve")
+            if isinstance(curve, list):
+                candidate_returns = _equity_curve_to_returns([float(value) for value in curve])
+                if candidate_returns:
+                    strategy_curves.append(candidate_returns)
+
+        if primary_returns and trial_sharpes and strategy_curves:
+            dsr = deflated_sharpe_ratio(strategy_returns=primary_returns, trial_sharpes=trial_sharpes)
+            white = white_reality_check(
+                strategy_returns=strategy_curves,
+                bootstrap=int(getattr(config.evaluation, "reality_check_bootstrap", 500)),
+            )
+            spa = hansen_spa_test(
+                strategy_returns=strategy_curves,
+                bootstrap=int(getattr(config.evaluation, "spa_bootstrap", 500)),
+            )
+            p_values = [_normal_positive_mean_pvalue(values) for values in strategy_curves]
+            p_values = [value if math.isfinite(value) else 1.0 for value in p_values]
+            fdr = benjamini_hochberg(
+                p_values,
+                alpha=float(getattr(config.evaluation, "fdr_alpha", 0.10)),
+            )
+            report.metrics["selection_bias_controls"] = {
+                "deflated_sharpe": {
+                    "observed_sharpe": float(dsr.observed_sharpe),
+                    "benchmark_max_sharpe": float(dsr.benchmark_max_sharpe),
+                    "deflated_sharpe_z": float(dsr.deflated_sharpe_z),
+                    "deflated_sharpe_pvalue": float(dsr.deflated_sharpe_pvalue),
+                    "trial_count": int(dsr.trial_count),
+                    "sample_length": int(dsr.sample_length),
+                },
+                "white_reality_check": white,
+                "hansen_spa": spa,
+                "candidate_p_values": p_values,
+                "fdr": fdr,
+            }
+
+    if bool(getattr(config.evaluation, "walk_forward_enabled", False)):
+        report.backtest["walk_forward"] = _walk_forward_summary(
+            config=config,
+            validation=validation,
+            cost_bps_per_trade=cost_bps_per_trade,
+            slippage_bps=slippage_bps,
+            regime_fit_kwargs=regime_fit_kwargs,
+            regime_backtest_kwargs=regime_backtest_kwargs,
+        )
 
     report_path = Path(config.training.metrics_path).with_name("evaluation_report.json")
     save_evaluation_report(report, report_path)
