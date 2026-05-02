@@ -30,6 +30,11 @@ RESERVED_COLUMNS = {
     "vol_direction_neutral",
     "vol_direction_label",
     "cross_sectional_rank",
+    "event_threshold",
+    "event_label",
+    "event_direction_label",
+    "event_signed_label",
+    "event_magnitude",
 }
 
 
@@ -46,6 +51,10 @@ class WindowDatasetArtifacts:
     direction_label: "np.ndarray | None" = None
     threshold_label: "np.ndarray | None" = None
     rank_target: "np.ndarray | None" = None
+    event_label: "np.ndarray | None" = None
+    event_direction_label: "np.ndarray | None" = None
+    event_signed_label: "np.ndarray | None" = None
+    event_magnitude: "np.ndarray | None" = None
 
     def __len__(self) -> int:
         return int(self.y.shape[0])
@@ -83,6 +92,10 @@ def build_labeled_windows(
     direction_key: str = "label",
     threshold_key: str = "threshold_label",
     rank_key: str = "cross_sectional_rank",
+    event_key: str = "event_label",
+    event_direction_key: str = "event_direction_label",
+    event_signed_key: str = "event_signed_label",
+    event_magnitude_key: str = "event_magnitude",
 ) -> WindowDatasetArtifacts:
     """Build sliding windows and next-candle binary labels from feature sequences."""
     if window_size <= 0:
@@ -113,6 +126,10 @@ def build_labeled_windows(
     direction_values: list[float] = []
     threshold_values: list[float] = []
     rank_values: list[float] = []
+    event_values: list[float] = []
+    event_direction_values: list[float] = []
+    event_signed_values: list[float] = []
+    event_magnitude_values: list[float] = []
     timestamps: list[datetime] = []
     tickers: list[str] = []
 
@@ -141,6 +158,10 @@ def build_labeled_windows(
                 direction_values.append(float(target_row.get(direction_key, target_row.get("label", 0.0))))
                 threshold_values.append(float(target_row.get(threshold_key, 1.0)))
                 rank_values.append(float(target_row.get(rank_key, 0.5)))
+                event_values.append(float(target_row.get(event_key, 0.0)))
+                event_direction_values.append(float(target_row.get(event_direction_key, target_row.get("label", 0.0))))
+                event_signed_values.append(float(target_row.get(event_signed_key, 1.0)))
+                event_magnitude_values.append(float(target_row.get(event_magnitude_key, 0.0)))
                 timestamps.append(target_row["timestamp"])
                 tickers.append(ticker)
 
@@ -158,6 +179,10 @@ def build_labeled_windows(
             direction_label=empty_aux.copy(),
             threshold_label=empty_aux.copy(),
             rank_target=empty_aux.copy(),
+            event_label=empty_aux.copy(),
+            event_direction_label=empty_aux.copy(),
+            event_signed_label=empty_aux.copy(),
+            event_magnitude=empty_aux.copy(),
             timestamps=[],
             tickers=[],
             feature_columns=columns,
@@ -172,6 +197,10 @@ def build_labeled_windows(
         direction_label=np.asarray(direction_values, dtype=np.float32),
         threshold_label=np.asarray(threshold_values, dtype=np.int64),
         rank_target=np.asarray(rank_values, dtype=np.float32),
+        event_label=np.asarray(event_values, dtype=np.float32),
+        event_direction_label=np.asarray(event_direction_values, dtype=np.float32),
+        event_signed_label=np.asarray(event_signed_values, dtype=np.int64),
+        event_magnitude=np.asarray(event_magnitude_values, dtype=np.float32),
         timestamps=timestamps,
         tickers=tickers,
         feature_columns=columns,
@@ -202,6 +231,22 @@ class WindowTensorDataset:
             torch.tensor(artifacts.threshold_label, dtype=torch.long) if artifacts.threshold_label is not None else None
         )
         self.rank_target = torch.tensor(artifacts.rank_target, dtype=torch.float32) if artifacts.rank_target is not None else None
+        self.event_label = torch.tensor(artifacts.event_label, dtype=torch.float32) if artifacts.event_label is not None else None
+        self.event_direction_label = (
+            torch.tensor(artifacts.event_direction_label, dtype=torch.float32)
+            if artifacts.event_direction_label is not None
+            else None
+        )
+        self.event_signed_label = (
+            torch.tensor(artifacts.event_signed_label, dtype=torch.long)
+            if artifacts.event_signed_label is not None
+            else None
+        )
+        self.event_magnitude = (
+            torch.tensor(artifacts.event_magnitude, dtype=torch.float32)
+            if artifacts.event_magnitude is not None
+            else None
+        )
         self.timestamps = artifacts.timestamps
         self.tickers = artifacts.tickers
         self.feature_columns = artifacts.feature_columns
@@ -224,4 +269,12 @@ class WindowTensorDataset:
             sample["threshold_label"] = self.threshold_label[index]
         if self.rank_target is not None:
             sample["rank_target"] = self.rank_target[index]
+        if self.event_label is not None:
+            sample["event_label"] = self.event_label[index]
+        if self.event_direction_label is not None:
+            sample["event_direction_label"] = self.event_direction_label[index]
+        if self.event_signed_label is not None:
+            sample["event_signed_label"] = self.event_signed_label[index]
+        if self.event_magnitude is not None:
+            sample["event_magnitude"] = self.event_magnitude[index]
         return sample

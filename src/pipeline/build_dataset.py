@@ -77,7 +77,29 @@ def _resolve_dataset_type(config: ExperimentConfig) -> str:
 
 
 def _resolve_label_horizon(config: ExperimentConfig) -> int:
+    event_target_cfg = getattr(config, "event_target", None)
+    if event_target_cfg is not None and bool(getattr(event_target_cfg, "enabled", False)):
+        event_horizon = getattr(event_target_cfg, "event_horizon_bars", None)
+        if event_horizon is not None:
+            return int(event_horizon)
     return int(config.targets.horizon if config.targets.horizon is not None else config.dataset.label_horizon)
+
+
+def _resolve_primary_target_key(config: ExperimentConfig) -> str:
+    event_target_cfg = getattr(config, "event_target", None)
+    if event_target_cfg is not None and bool(getattr(event_target_cfg, "enabled", False)):
+        event_primary = str(getattr(event_target_cfg, "primary_target", "")).strip()
+        target_primary = str(getattr(config.targets, "primary_target", "")).strip()
+        if event_primary in {"event_meta_label", "event_label", "event"} or target_primary in {
+            "event_meta_label",
+            "event_label",
+            "event",
+        }:
+            return "event_label"
+    primary = str(getattr(config.targets, "primary_target", "label")).strip()
+    if primary == "event_meta_label":
+        return "event_label"
+    return primary
 
 
 def _resolve_panel_context_size(config: ExperimentConfig) -> int:
@@ -294,6 +316,71 @@ def _validate_dataset_coverage(
     }
 
 
+def normalize_split_sequences(
+    split_sequences: dict[str, dict[str, list[list[dict[str, Any]]]]],
+    feature_columns: list[str],
+) -> tuple[dict[str, dict[str, list[list[dict[str, Any]]]]], FeatureNormalizer | None]:
+    """Public alias for the internal split-normalization helper."""
+    return _normalize_split_sequences(split_sequences, feature_columns)
+
+
+def assemble_split_datasets(
+    config: ExperimentConfig,
+    split_sequences: dict[str, dict[str, list[list[dict[str, Any]]]]],
+    feature_columns: list[str],
+) -> tuple[
+    dict[str, WindowDatasetArtifacts | PanelDatasetArtifacts],
+    dict[str, int],
+    int,
+]:
+    """Build window/panel datasets from already-split labeled sequences.
+
+    Returns ``(datasets, split_row_counts, resolved_window_size)``. No files
+    are written; this is intended for callers (e.g. walk-forward retrain) that
+    manage their own persistence.
+    """
+    dataset_type = _resolve_dataset_type(config)
+    if dataset_type == "panel":
+        panel_context_size = _resolve_panel_context_size(config)
+        resolved_window_size = panel_context_size
+    else:
+        panel_context_size = config.dataset.window_size
+        resolved_window_size = config.dataset.window_size
+
+    return_target_key = _resolve_return_target_key(config)
+    direction_target_key = _resolve_direction_target_key(config)
+    threshold_target_key = _resolve_threshold_target_key(config)
+    primary_target_key = _resolve_primary_target_key(config)
+    datasets: dict[str, WindowDatasetArtifacts | PanelDatasetArtifacts] = {}
+    split_row_counts: dict[str, int] = {}
+    for split_name, ticker_sequences in split_sequences.items():
+        split_row_counts[split_name] = sum(
+            len(sequence) for sequences in ticker_sequences.values() for sequence in sequences
+        )
+        if dataset_type == "panel":
+            datasets[split_name] = build_panel_dataset(
+                ticker_sequences,
+                context_size=panel_context_size,
+                feature_columns=feature_columns,
+                label_key=primary_target_key,
+                return_key=return_target_key,
+                direction_key=direction_target_key,
+                threshold_key=threshold_target_key,
+            )
+        else:
+            datasets[split_name] = build_labeled_windows(
+                ticker_sequences,
+                window_size=resolved_window_size,
+                stride=config.dataset.stride,
+                feature_columns=feature_columns,
+                label_key=primary_target_key,
+                return_key=return_target_key,
+                direction_key=direction_target_key,
+                threshold_key=threshold_target_key,
+            )
+    return datasets, split_row_counts, resolved_window_size
+
+
 def build_dataset(
     config: ExperimentConfig | None = None,
     *,
@@ -311,6 +398,17 @@ def build_dataset(
         )
 
     target_horizon = _resolve_label_horizon(config)
+    event_target_cfg = getattr(config, "event_target", None)
+    event_k = (
+        float(getattr(event_target_cfg, "event_k", getattr(event_target_cfg, "k", 1.0)))
+        if event_target_cfg is not None
+        else 1.0
+    )
+    event_vol_window = (
+        int(getattr(event_target_cfg, "event_vol_lookback_bars", getattr(event_target_cfg, "vol_window", 78)))
+        if event_target_cfg is not None
+        else 78
+    )
     labeled_sequences = label_ticker_sequences(
         feature_artifacts.ticker_sequences,
         horizon=target_horizon,
@@ -319,6 +417,8 @@ def build_dataset(
         zscore_window=int(config.targets.zscore_window),
         volatility_label_k=float(getattr(config.targets, "volatility_label_k", 0.25)),
         regression_clip=float(getattr(config.targets, "regression_clip", 3.0)),
+        event_k=event_k,
+        event_vol_window=event_vol_window,
     )
 
     split_mode = config.dataset.split_mode.lower().strip()
@@ -354,6 +454,7 @@ def build_dataset(
     return_target_key = _resolve_return_target_key(config)
     direction_target_key = _resolve_direction_target_key(config)
     threshold_target_key = _resolve_threshold_target_key(config)
+    primary_target_key = _resolve_primary_target_key(config)
     datasets: dict[str, WindowDatasetArtifacts | PanelDatasetArtifacts] = {}
     split_row_counts: dict[str, int] = {}
     for split_name, ticker_sequences in split_sequences.items():
@@ -363,7 +464,7 @@ def build_dataset(
                 ticker_sequences,
                 context_size=panel_context_size,
                 feature_columns=feature_artifacts.feature_columns,
-                label_key=config.targets.primary_target,
+                label_key=primary_target_key,
                 return_key=return_target_key,
                 direction_key=direction_target_key,
                 threshold_key=threshold_target_key,
@@ -374,7 +475,7 @@ def build_dataset(
                 window_size=resolved_window_size,
                 stride=config.dataset.stride,
                 feature_columns=feature_artifacts.feature_columns,
-                label_key=config.targets.primary_target,
+                label_key=primary_target_key,
                 return_key=return_target_key,
                 direction_key=direction_target_key,
                 threshold_key=threshold_target_key,
@@ -426,6 +527,7 @@ def build_dataset(
                 "dataset_type": dataset_type,
                 "split_mode": split_mode,
                 "primary_target": config.targets.primary_target,
+                "resolved_primary_target": primary_target_key,
                 "return_target": return_target_key,
                 "target_columns": list(TARGET_COLUMNS),
                 "context_size": panel_context_size if dataset_type == "panel" else None,

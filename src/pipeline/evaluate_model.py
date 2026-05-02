@@ -15,6 +15,7 @@ from src.evaluation.analysis import EvaluationReport, build_evaluation_report, s
 from src.evaluation.backtest import run_backtest
 from src.evaluation.calibration import fit_temperature_scaling
 from src.evaluation.metrics import compute_classification_metrics
+from src.evaluation.uncertainty import estimate_mc_dropout_uncertainty
 from src.models.losses import compute_pos_weight
 from src.models.losses_prob import build_model_loss
 from src.evaluation.stat_tests import benjamini_hochberg, deflated_sharpe_ratio, hansen_spa_test, white_reality_check
@@ -53,6 +54,26 @@ def _build_regime_backtest_kwargs(config: ExperimentConfig) -> dict[str, Any]:
     }
 
 
+def _build_execution_model_kwargs(config: ExperimentConfig) -> dict[str, Any]:
+    execution_cfg = getattr(config, "execution_model", None)
+    if execution_cfg is None:
+        return {}
+    return {
+        "execution_model_enabled": bool(getattr(execution_cfg, "enabled", False)),
+        "use_open_auction": bool(getattr(execution_cfg, "use_open_auction", True)),
+        "use_close_auction": bool(getattr(execution_cfg, "use_close_auction", True)),
+        "regular_max_pov": float(getattr(execution_cfg, "regular_max_pov", 0.05)),
+        "open_max_pov": float(getattr(execution_cfg, "open_max_pov", 0.03)),
+        "close_max_pov": float(getattr(execution_cfg, "close_max_pov", 0.05)),
+        "open_penalty_bars": int(getattr(execution_cfg, "open_penalty_bars", 3)),
+        "close_penalty_bars": int(getattr(execution_cfg, "close_penalty_bars", 3)),
+        "base_spread_bps": float(getattr(execution_cfg, "base_spread_bps", 6.0)),
+        "base_impact_bps": float(getattr(execution_cfg, "base_impact_bps", 25.0)),
+        "order_notional_fraction": float(getattr(execution_cfg, "order_notional_fraction", 0.01)),
+        "reject_excess_pov": bool(getattr(execution_cfg, "reject_excess_pov", False)),
+    }
+
+
 def _safe_probability(up_probability: float, down_probability: float) -> float:
     denominator = float(up_probability + down_probability)
     if denominator <= 1e-8:
@@ -81,6 +102,7 @@ def _build_confidence_bucket_summary(
     slippage_bps: float,
     regime_backtest_kwargs: dict[str, Any] | None = None,
     regime_fit_kwargs: dict[str, Any] | None = None,
+    execution_model_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from src.evaluation.metrics import compute_classification_metrics
 
@@ -150,8 +172,10 @@ def _build_confidence_bucket_summary(
         cost_bps_per_trade=cost_bps_per_trade,
         slippage_bps=slippage_bps,
         signal_scores=getattr(validation, "action_scores", None),
+        sigma_values=getattr(validation, "sigma_values", None),
         **(regime_fit_kwargs or {}),
         **(regime_backtest_kwargs or {}),
+        **(execution_model_kwargs or {}),
     )
 
     average_realized_return = (
@@ -370,6 +394,7 @@ def _walk_forward_summary(
     slippage_bps: float,
     regime_fit_kwargs: dict[str, Any],
     regime_backtest_kwargs: dict[str, Any],
+    execution_model_kwargs: dict[str, Any],
 ) -> dict[str, Any]:
     timestamps = getattr(validation, "timestamps", None) or []
     parsed_timestamps = [_coerce_datetime(value) for value in timestamps]
@@ -453,6 +478,7 @@ def _walk_forward_summary(
             signal_mu_sigma_floor=float(getattr(config.backtest, "signal_mu_sigma_floor", 0.05)),
             **regime_fit_kwargs,
             **regime_backtest_kwargs,
+            **execution_model_kwargs,
         )
 
         if labels and len(labels) == len(probabilities):
@@ -577,6 +603,10 @@ def run_evaluation_pipeline(
         cross_sectional_reg_weight=float(getattr(config.training, "cross_sectional_reg_weight", 0.0)),
         cross_sectional_reg_limit=float(getattr(config.training, "cross_sectional_reg_limit", 2.5)),
         calibration_aux_weight=float(getattr(config.training, "calibration_aux_weight", 0.0)),
+        event_weight=float(getattr(config.training, "event_loss_weight", 0.0)),
+        event_direction_weight=float(getattr(config.training, "event_direction_loss_weight", 0.0)),
+        event_focal_gamma=float(getattr(config.training, "event_focal_gamma", 2.0)),
+        event_sample_weight_cap=float(getattr(config.training, "event_sample_weight_cap", 2.0)),
     ).to(device)
 
     include_costs = bool(getattr(config.backtest, "include_costs", True))
@@ -586,6 +616,7 @@ def run_evaluation_pipeline(
     validation = validate_epoch(model, test_loader, loss_fn, device=device)
     regime_backtest_kwargs = _build_regime_backtest_kwargs(config)
     regime_fit_kwargs = _extract_regime_fit_kwargs(fit_loader)
+    execution_model_kwargs = _build_execution_model_kwargs(config)
     selection_mode = str(getattr(config.backtest, "selection_mode", "global_abs")).lower().strip()
     score_source = str(getattr(config.backtest, "score_source", "expected_utility")).lower().strip()
     long_short_percentile = getattr(config.backtest, "long_short_percentile", None)
@@ -621,6 +652,7 @@ def run_evaluation_pipeline(
         signal_mu_sigma_floor=float(getattr(config.backtest, "signal_mu_sigma_floor", 0.05)),
         **regime_fit_kwargs,
         **regime_backtest_kwargs,
+        **execution_model_kwargs,
     )
 
     report = build_evaluation_report(
@@ -629,6 +661,32 @@ def run_evaluation_pipeline(
         metrics=validation.metrics,
         backtest=backtest,
     )
+    if validation.event_metrics is not None:
+        report.metrics["event_head"] = validation.event_metrics.to_dict()
+    if validation.event_direction_metrics is not None:
+        report.metrics["conditional_direction_head"] = validation.event_direction_metrics.to_dict()
+    if validation.event_probabilities and validation.event_labels:
+        prevalence = sum(int(value) for value in validation.event_labels) / max(1, len(validation.event_labels))
+        report.metrics["event_target_summary"] = {
+            "sample_count": len(validation.event_labels),
+            "event_prevalence": float(prevalence),
+            "mean_p_event": float(sum(float(value) for value in validation.event_probabilities) / len(validation.event_probabilities)),
+        }
+    uncertainty_cfg = getattr(config, "uncertainty", None)
+    uncertainty_method = str(getattr(uncertainty_cfg, "method", "none")).lower().strip() if uncertainty_cfg is not None else "none"
+    if uncertainty_method in {"mc_dropout", "dropout"}:
+        uncertainty_report = estimate_mc_dropout_uncertainty(
+            model,
+            test_loader,
+            device=device,
+            samples=int(getattr(uncertainty_cfg, "mc_dropout_samples", 20)),
+        )
+        report.metrics["mc_dropout_uncertainty"] = uncertainty_report.to_dict()
+    elif uncertainty_method in {"deep_ensemble", "ensemble"}:
+        report.metrics["ensemble_uncertainty"] = {
+            "configured_members": int(getattr(uncertainty_cfg, "ensemble_members", 1)),
+            "status": "configure multiple seeded runs and stack out-of-fold predictions",
+        }
 
     if getattr(validation, "action_scores", None):
         precision_labels = validation.labels
@@ -658,6 +716,7 @@ def run_evaluation_pipeline(
             slippage_bps=slippage_bps,
             regime_backtest_kwargs=regime_backtest_kwargs,
             regime_fit_kwargs=regime_fit_kwargs,
+            execution_model_kwargs=execution_model_kwargs,
         )
         for top_percentile in confidence_bucket_sweep
     ]
@@ -737,6 +796,7 @@ def run_evaluation_pipeline(
             signal_mu_sigma_floor=float(getattr(config.backtest, "signal_mu_sigma_floor", 0.05)),
             **regime_fit_kwargs,
             **regime_backtest_kwargs,
+            **execution_model_kwargs,
         ).to_dict()
         for threshold in confidence_threshold_sweep
     }
@@ -796,6 +856,7 @@ def run_evaluation_pipeline(
             slippage_bps=slippage_bps,
             regime_fit_kwargs=regime_fit_kwargs,
             regime_backtest_kwargs=regime_backtest_kwargs,
+            execution_model_kwargs=execution_model_kwargs,
         )
 
     report_path = Path(config.training.metrics_path).with_name("evaluation_report.json")

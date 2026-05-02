@@ -15,6 +15,16 @@ except ModuleNotFoundError:
     nn = None
     F = None
 
+from src.models.losses_event import (
+    event_focal_loss,
+    extract_event_direction_logit,
+    extract_event_direction_target,
+    extract_event_logit,
+    extract_event_sample_weight,
+    extract_event_target,
+    masked_direction_loss,
+)
+
 
 def _resolve_tensor(value: Any, *, device: Any, dtype: Any | None = None) -> Any | None:
     if value is None:
@@ -352,6 +362,10 @@ if nn is not None:
             cross_sectional_reg_weight: float = 0.0,
             cross_sectional_reg_limit: float = 2.5,
             calibration_aux_weight: float = 0.0,
+            event_weight: float = 0.0,
+            event_direction_weight: float = 0.0,
+            event_focal_gamma: float = 2.0,
+            event_sample_weight_cap: float = 2.0,
         ) -> None:
             super().__init__()
             self.direction_weight = float(direction_weight)
@@ -374,6 +388,10 @@ if nn is not None:
             self.cross_sectional_reg_weight = float(cross_sectional_reg_weight)
             self.cross_sectional_reg_limit = float(cross_sectional_reg_limit)
             self.calibration_aux_weight = float(calibration_aux_weight)
+            self.event_weight = float(event_weight)
+            self.event_direction_weight = float(event_direction_weight)
+            self.event_focal_gamma = float(event_focal_gamma)
+            self.event_sample_weight_cap = float(event_sample_weight_cap)
             self.requires_dict_outputs = any(
                 weight > 0.0
                 for weight in (
@@ -387,6 +405,8 @@ if nn is not None:
                     self.temporal_smoothness_weight,
                     self.cross_sectional_reg_weight,
                     self.calibration_aux_weight,
+                    self.event_weight,
+                    self.event_direction_weight,
                 )
             )
             self.requires_probabilistic_outputs = any(
@@ -458,6 +478,45 @@ if nn is not None:
                 direction_loss = self.bce(direction_logit, direction_target)
                 total = total + self.direction_weight * direction_loss
                 components["direction_loss"] = float(direction_loss.detach().cpu().item())
+
+            event_logit = extract_event_logit(outputs)
+            if event_logit is None and self.event_weight > 0:
+                raise ValueError(
+                    "event_loss_weight > 0 but model outputs are missing event_logit. "
+                    "Enable model.include_event_heads."
+                )
+            event_target = extract_event_target(batch, device=device)
+            event_sample_weight = extract_event_sample_weight(
+                batch,
+                device=device,
+                cap=self.event_sample_weight_cap,
+            )
+            if event_logit is not None and event_target is not None:
+                event_loss = event_focal_loss(
+                    event_logit,
+                    event_target,
+                    gamma=self.event_focal_gamma,
+                    sample_weight=event_sample_weight,
+                )
+                total = total + self.event_weight * event_loss
+                components["event_loss"] = float(event_loss.detach().cpu().item())
+
+            event_direction_logit = extract_event_direction_logit(outputs)
+            if event_direction_logit is None and self.event_direction_weight > 0:
+                raise ValueError(
+                    "event_direction_loss_weight > 0 but model outputs are missing event_direction_logit. "
+                    "Enable model.include_event_heads."
+                )
+            event_direction_target = extract_event_direction_target(batch, device=device)
+            if event_direction_logit is not None and event_direction_target is not None and event_target is not None:
+                event_direction_loss = masked_direction_loss(
+                    event_direction_logit,
+                    event_direction_target,
+                    event_target >= 0.5,
+                    sample_weight=event_sample_weight,
+                )
+                total = total + self.event_direction_weight * event_direction_loss
+                components["event_direction_loss"] = float(event_direction_loss.detach().cpu().item())
 
             mean_return = extract_mean_return(outputs)
             log_scale = extract_log_scale(outputs)
@@ -610,6 +669,10 @@ def build_model_loss(
     cross_sectional_reg_weight: float = 0.0,
     cross_sectional_reg_limit: float = 2.5,
     calibration_aux_weight: float = 0.0,
+    event_weight: float = 0.0,
+    event_direction_weight: float = 0.0,
+    event_focal_gamma: float = 2.0,
+    event_sample_weight_cap: float = 2.0,
 ) -> Any:
     if nn is None:
         raise ModuleNotFoundError("torch is required to build losses")
@@ -628,6 +691,8 @@ def build_model_loss(
             float(temporal_smoothness_weight),
             float(cross_sectional_reg_weight),
             float(calibration_aux_weight),
+            float(event_weight),
+            float(event_direction_weight),
         )
     )
     if requires_multitask and not multitask_output:
@@ -658,5 +723,9 @@ def build_model_loss(
             cross_sectional_reg_weight=cross_sectional_reg_weight,
             cross_sectional_reg_limit=cross_sectional_reg_limit,
             calibration_aux_weight=calibration_aux_weight,
+            event_weight=event_weight,
+            event_direction_weight=event_direction_weight,
+            event_focal_gamma=event_focal_gamma,
+            event_sample_weight_cap=event_sample_weight_cap,
         )
     return DirectionOnlyLoss(pos_weight=pos_weight)

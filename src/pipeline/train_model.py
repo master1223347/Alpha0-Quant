@@ -46,8 +46,10 @@ def _requires_multitask_objective(config: ExperimentConfig) -> bool:
         float(getattr(config.training, "temporal_smoothness_weight", 0.0)),
         float(getattr(config.training, "cross_sectional_reg_weight", 0.0)),
         float(getattr(config.training, "calibration_aux_weight", 0.0)),
+        float(getattr(config.training, "event_loss_weight", 0.0)),
+        float(getattr(config.training, "event_direction_loss_weight", 0.0)),
     )
-    return any(weight > 0.0 for weight in weighted_terms)
+    return any(weight > 0.0 for weight in weighted_terms) or bool(getattr(config.event_target, "enabled", False))
 
 
 def _requires_probabilistic_output(config: ExperimentConfig) -> bool:
@@ -142,6 +144,11 @@ def _export_trained_model(config: ExperimentConfig, *, model: Any, train_dataset
     return None
 
 
+def build_model(config: ExperimentConfig, *, num_features: int, window_size: int) -> Any:
+    """Public alias for the internal model factory."""
+    return _build_model(config, num_features=num_features, window_size=window_size)
+
+
 def _build_model(config: ExperimentConfig, *, num_features: int, window_size: int) -> Any:
     model_name = config.model.model_name.lower()
     minn_enabled = bool(getattr(config.model, "minn_enabled", False))
@@ -169,10 +176,18 @@ def _build_model(config: ExperimentConfig, *, num_features: int, window_size: in
         multitask_output = True
     include_rank_head = bool(getattr(config.model, "include_rank_head", False))
     include_regime_head = bool(getattr(config.model, "include_regime_head", False))
+    include_event_heads = bool(getattr(config.model, "include_event_heads", False)) or bool(
+        getattr(config.event_target, "enabled", False)
+    )
     if float(getattr(config.training, "rank_loss_weight", 0.0)) > 0.0:
         include_rank_head = True
     if float(getattr(config.training, "regime_loss_weight", 0.0)) > 0.0:
         include_regime_head = True
+    if (
+        float(getattr(config.training, "event_loss_weight", 0.0)) > 0.0
+        or float(getattr(config.training, "event_direction_loss_weight", 0.0)) > 0.0
+    ):
+        include_event_heads = True
     regime_classes = int(getattr(config.model, "regime_classes", 3))
     distribution = str(getattr(config.model, "distribution", "gaussian"))
     if model_name in {"baseline", "baseline_mlp", "mlp", "encoder", "encoder_mlp"}:
@@ -185,6 +200,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int, window_size: in
             probabilistic_output=probabilistic_output,
             include_rank_score=include_rank_head,
             include_regime_logits=include_regime_head,
+            include_event_heads=include_event_heads,
             regime_classes=regime_classes,
             distribution=distribution,
         )
@@ -196,6 +212,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int, window_size: in
             multitask_output=multitask_output,
             include_rank_score=include_rank_head,
             include_regime_logits=include_regime_head,
+            include_event_heads=include_event_heads,
             regime_classes=regime_classes,
             distribution=distribution,
             probabilistic_output=probabilistic_output,
@@ -208,6 +225,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int, window_size: in
             multitask_output=multitask_output,
             include_rank_score=include_rank_head,
             include_regime_logits=include_regime_head,
+            include_event_heads=include_event_heads,
             regime_classes=regime_classes,
             distribution=distribution,
             probabilistic_output=probabilistic_output,
@@ -220,6 +238,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int, window_size: in
             multitask_output=multitask_output,
             include_rank_score=include_rank_head,
             include_regime_logits=include_regime_head,
+            include_event_heads=include_event_heads,
             regime_classes=regime_classes,
             distribution=distribution,
             probabilistic_output=probabilistic_output,

@@ -35,6 +35,7 @@ class UniverseConfig:
     min_sequence_length: int | None = None
     membership_path: str | None = None
     include_delisted: bool = True
+    static_nasdaq_membership: bool = False
 
 
 @dataclass(slots=True)
@@ -70,6 +71,81 @@ class FeatureConfig:
 
 
 @dataclass(slots=True)
+class MarketContextConfig:
+    enabled: bool = False
+    benchmarks: tuple[str, ...] = ("SPY", "QQQ")
+    benchmark_tickers: tuple[str, ...] = ("SPY", "QQQ")
+    sector_etf_tickers: tuple[str, ...] = (
+        "XLC",
+        "XLY",
+        "XLP",
+        "XLE",
+        "XLF",
+        "XLV",
+        "XLI",
+        "XLB",
+        "XLRE",
+        "XLK",
+        "XLU",
+    )
+    include_full_sector_bank: bool = False
+    return_lookbacks: tuple[int, ...] = (1, 3, 12)
+    rv_window: int = 12
+    rv_baseline_window: int = 78
+    enable_breadth: bool = True
+    breadth_enabled: bool = True
+    breadth_ema_windows: tuple[int, ...] = (3, 12)
+    realized_corr_enabled: bool = False
+    corr_liquid_subset_size: int = 300
+    corr_windows_bars: tuple[int, ...] = (78, 390)
+    corr_shrinkage: str = "constant_correlation"
+    beta_window_bars: int = 1560
+    enable_gap_regime: bool = True
+    gap_regime_enabled: bool = True
+    gap_z_window_days: int = 60
+    gap_hmm_states: int = 4
+    sector_map_path: str | None = None
+    infer_sector_map_if_missing: bool = True
+
+
+@dataclass(slots=True)
+class CalendarConfig:
+    enabled: bool = False
+    macro_calendar_path: str | None = "data/raw/calendar/macro_calendar.parquet"
+    sec_8k_events_path: str | None = "data/raw/events/sec_8k_events.parquet"
+    earnings_calendar_pit_path: str | None = None
+    enable_pre_earnings_flags_without_pit: bool = False
+    macro_events: tuple[str, ...] = ("fomc", "fomc_press", "cpi", "nfp", "gdp")
+
+
+@dataclass(slots=True)
+class EventTargetConfig:
+    """Two-head event-meta target.
+
+    Event labels are always emitted alongside the existing volatility labels
+    (additive), so other code paths keep working. When `enabled=True`, training
+    code may select `event_label` as the threshold target and
+    `event_direction_label` as the direction target.
+
+    The event horizon equals the existing labeling horizon (targets.horizon /
+    dataset.label_horizon) so we don't require a parallel forward window.
+    """
+
+    enabled: bool = False
+    primary_target: str = "event_meta_label"
+    event_horizon_bars: int | None = None
+    k: float = 1.0
+    event_k: float = 1.0
+    event_k_grid: tuple[float, ...] = (0.5, 0.75, 1.0, 1.25, 1.5)
+    event_vol_estimator: str = "rolling_std"
+    vol_window: int = 78
+    event_vol_lookback_bars: int = 78
+    conditional_direction: bool = True
+    min_event_rate: float = 0.10
+    max_event_rate: float = 0.40
+
+
+@dataclass(slots=True)
 class DatasetConfig:
     window_size: int = 32
     stride: int = 1
@@ -94,6 +170,7 @@ class ModelConfig:
     probabilistic_output: bool = True
     include_rank_head: bool = False
     include_regime_head: bool = False
+    include_event_heads: bool = False
     regime_classes: int = 3
     distribution: str = "gaussian"
 
@@ -129,7 +206,36 @@ class TrainingConfig:
     cross_sectional_reg_weight: float = 0.0
     cross_sectional_reg_limit: float = 2.5
     calibration_aux_weight: float = 0.0
+    event_loss_weight: float = 0.0
+    event_direction_loss_weight: float = 0.0
+    event_focal_gamma: float = 2.0
+    event_sample_weight_cap: float = 2.0
     min_auc_sample_count: int = 200
+
+
+@dataclass(slots=True)
+class UncertaintyConfig:
+    method: str = "none"
+    ensemble_members: int = 1
+    mc_dropout_samples: int = 20
+    calibrate_by_regime: bool = True
+    calibrate_by_liquidity_bucket: bool = True
+
+
+@dataclass(slots=True)
+class ExecutionModelConfig:
+    enabled: bool = False
+    use_open_auction: bool = True
+    use_close_auction: bool = True
+    regular_max_pov: float = 0.05
+    open_max_pov: float = 0.03
+    close_max_pov: float = 0.05
+    open_penalty_bars: int = 3
+    close_penalty_bars: int = 3
+    base_spread_bps: float = 6.0
+    base_impact_bps: float = 25.0
+    order_notional_fraction: float = 0.01
+    reject_excess_pov: bool = False
 
 
 @dataclass(slots=True)
@@ -182,6 +288,26 @@ class EvaluationConfig:
 
 
 @dataclass(slots=True)
+class WalkForwardRetrainConfig:
+    """True walk-forward retraining: refit weights, normalizer, and metrics per fold.
+
+    Distinct from `EvaluationConfig.walk_forward_*`, which only slices
+    pre-trained predictions. When `enabled=True`, the pipeline trains a fresh
+    model in each fold using rolling calendar windows, with frozen
+    hyperparameters across folds.
+    """
+
+    enabled: bool = False
+    train_days: int = 252
+    val_days: int = 21
+    test_days: int = 21
+    step_days: int = 21
+    embargo_bars: int = 78
+    max_folds: int | None = None
+    save_fold_models: bool = False
+
+
+@dataclass(slots=True)
 class DeploymentConfig:
     export_format: str = "none"
     export_path: str = "models/exports/model_export.pt2"
@@ -195,11 +321,17 @@ class ExperimentConfig:
     universe: UniverseConfig = field(default_factory=UniverseConfig)
     targets: TargetConfig = field(default_factory=TargetConfig)
     features: FeatureConfig = field(default_factory=FeatureConfig)
+    market_context: MarketContextConfig = field(default_factory=MarketContextConfig)
+    calendar: CalendarConfig = field(default_factory=CalendarConfig)
+    event_target: EventTargetConfig = field(default_factory=EventTargetConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
+    uncertainty: UncertaintyConfig = field(default_factory=UncertaintyConfig)
+    execution_model: ExecutionModelConfig = field(default_factory=ExecutionModelConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    walk_forward_retrain: WalkForwardRetrainConfig = field(default_factory=WalkForwardRetrainConfig)
     deployment: DeploymentConfig = field(default_factory=DeploymentConfig)
 
 

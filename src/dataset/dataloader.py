@@ -61,6 +61,22 @@ class ArtifactTensorDataset:
             _pick_value(artifacts, ("rank_target", "cross_sectional_rank", "rank_label")),
             dtype=torch.float32,
         )
+        self.event_label = self._to_tensor(
+            _pick_value(artifacts, ("event_label", "event_target", "y_event")),
+            dtype=torch.float32,
+        )
+        self.event_direction_label = self._to_tensor(
+            _pick_value(artifacts, ("event_direction_label", "conditional_direction_label", "y_event_direction")),
+            dtype=torch.float32,
+        )
+        self.event_signed_label = self._to_tensor(
+            _pick_value(artifacts, ("event_signed_label", "event_meta_label", "event_bucket_label")),
+            dtype=torch.long,
+        )
+        self.event_magnitude = self._to_tensor(
+            _pick_value(artifacts, ("event_magnitude", "event_sample_weight", "event_strength")),
+            dtype=torch.float32,
+        )
         self.timestamps = _pick_value(artifacts, ("timestamps",))
         self.tickers = _pick_value(artifacts, ("tickers",))
         self.feature_columns = _pick_value(artifacts, ("feature_columns",))
@@ -107,6 +123,14 @@ class ArtifactTensorDataset:
             sample["threshold_label"] = self.threshold_label[index]
         if self.rank_target is not None:
             sample["rank_target"] = self.rank_target[index]
+        if self.event_label is not None:
+            sample["event_label"] = self.event_label[index]
+        if self.event_direction_label is not None:
+            sample["event_direction_label"] = self.event_direction_label[index]
+        if self.event_signed_label is not None:
+            sample["event_signed_label"] = self.event_signed_label[index]
+        if self.event_magnitude is not None:
+            sample["event_magnitude"] = self.event_magnitude[index]
         if self.timestamps is not None:
             sample["timestamp"] = _normalize_timestamp(self.timestamps[index])
         if self.tickers is not None:

@@ -111,6 +111,10 @@ def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> Trainin
         cross_sectional_reg_weight=float(getattr(config.training, "cross_sectional_reg_weight", 0.0)),
         cross_sectional_reg_limit=float(getattr(config.training, "cross_sectional_reg_limit", 2.5)),
         calibration_aux_weight=float(getattr(config.training, "calibration_aux_weight", 0.0)),
+        event_weight=float(getattr(config.training, "event_loss_weight", 0.0)),
+        event_direction_weight=float(getattr(config.training, "event_direction_loss_weight", 0.0)),
+        event_focal_gamma=float(getattr(config.training, "event_focal_gamma", 2.0)),
+        event_sample_weight_cap=float(getattr(config.training, "event_sample_weight_cap", 2.0)),
     ).to(device)
 
     optimizer = torch.optim.AdamW(
@@ -173,6 +177,12 @@ def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> Trainin
             "train_loss": train_loss,
             "val_loss": validation.loss,
             "val_metrics": validation.metrics.to_dict(),
+            "val_event_metrics": validation.event_metrics.to_dict() if validation.event_metrics is not None else None,
+            "val_event_direction_metrics": (
+                validation.event_direction_metrics.to_dict()
+                if validation.event_direction_metrics is not None
+                else None
+            ),
             "directional_sample_count": int(getattr(validation, "directional_sample_count", 0)),
             "total_sample_count": int(getattr(validation, "total_sample_count", 0)),
             "score_source": score_source,

@@ -26,6 +26,11 @@ RESERVED_COLUMNS = {
     "vol_direction_neutral",
     "vol_direction_label",
     "cross_sectional_rank",
+    "event_threshold",
+    "event_label",
+    "event_direction_label",
+    "event_signed_label",
+    "event_magnitude",
 }
 
 

@@ -11,6 +11,7 @@ except ModuleNotFoundError:
     nn = None
 
 from src.models.encoder import MLPEncoder
+from src.models.heads_event import EventMetaHead
 
 
 if nn is not None:
@@ -29,6 +30,7 @@ if nn is not None:
             probabilistic_output: bool = False,
             include_rank_score: bool = False,
             include_regime_logits: bool = False,
+            include_event_heads: bool = False,
             regime_classes: int = 3,
             distribution: str = "gaussian",
         ) -> None:
@@ -44,6 +46,7 @@ if nn is not None:
             self.probabilistic_output = bool(probabilistic_output)
             self.include_rank_score = bool(include_rank_score)
             self.include_regime_logits = bool(include_regime_logits)
+            self.include_event_heads = bool(include_event_heads)
             self.distribution = distribution
             self.direction_head = nn.Linear(self.encoder.output_dim, 1)
             self.mean_head = nn.Linear(self.encoder.output_dim, 1)
@@ -51,6 +54,7 @@ if nn is not None:
             self.threshold_head = nn.Linear(self.encoder.output_dim, 3)
             self.rank_head = nn.Linear(self.encoder.output_dim, 1) if include_rank_score else None
             self.regime_head = nn.Linear(self.encoder.output_dim, regime_classes) if include_regime_logits else None
+            self.event_head = EventMetaHead(self.encoder.output_dim) if include_event_heads else None
 
         def forward(self, inputs: torch.Tensor) -> dict[str, torch.Tensor] | torch.Tensor:
             flattened = inputs.reshape(inputs.size(0), -1)
@@ -70,6 +74,8 @@ if nn is not None:
                 outputs["rank_score"] = self.rank_head(encoded).squeeze(-1)
             if self.regime_head is not None:
                 outputs["regime_logits"] = self.regime_head(encoded)
+            if self.event_head is not None:
+                outputs.update(self.event_head(encoded))
             return outputs
 
 else:

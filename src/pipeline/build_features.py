@@ -15,10 +15,13 @@ from src.data.discover import TickerFile, discover_tickers
 from src.data.loader import OhlcvRow, load_ticker_file
 from src.data.validator import validate_feature_rows, validate_ohlcv_rows
 from src.features.base_features import build_base_features
+from src.features.calendar_features import attach_event_calendar_features
 from src.features.cross_sectional import apply_cross_sectional_features
 from src.features.cross_sectional import cross_sectional_feature_columns
 from src.features.factor_cointegration import apply_factor_cointegration_features
+from src.features.market_context import attach_market_context_features
 from src.features.market_features import build_market_features
+from src.features.sector_mapping import attach_sector_id_feature
 from src.features.advanced_volatility import build_realized_volatility_features
 from src.features.time_features import build_time_features
 from src.features.volume_features import build_volume_features
@@ -294,6 +297,80 @@ def build_feature_store(
                 )
     elif flattened_rows:
         feature_columns = base_feature_columns or _feature_columns_from_sequence(flattened_rows[:1])
+
+    market_context_cfg = getattr(config, "market_context", None)
+    if flattened_rows and market_context_cfg is not None and bool(getattr(market_context_cfg, "enabled", False)):
+        benchmark_tickers = tuple(getattr(market_context_cfg, "benchmark_tickers", getattr(market_context_cfg, "benchmarks", ("SPY", "QQQ"))))
+        if bool(getattr(market_context_cfg, "include_full_sector_bank", False)):
+            benchmark_tickers = tuple(dict.fromkeys(benchmark_tickers + tuple(getattr(market_context_cfg, "sector_etf_tickers", ()))))
+
+        sector_columns = attach_sector_id_feature(
+            flattened_rows,
+            sector_map_path=getattr(market_context_cfg, "sector_map_path", None),
+            infer_if_missing=bool(getattr(market_context_cfg, "infer_sector_map_if_missing", True)),
+            sector_etf_tickers=tuple(getattr(market_context_cfg, "sector_etf_tickers", ())),
+        )
+        if sector_columns:
+            feature_columns = list(feature_columns) + sector_columns
+            for ticker, sequences in ticker_sequences.items():
+                for index, sequence in enumerate(sequences):
+                    validate_feature_rows(
+                        sequence,
+                        feature_columns=sector_columns,
+                        stage=f"{ticker}_sector_context_{index}",
+                        raise_on_error=True,
+                    )
+
+        new_columns = attach_market_context_features(
+            flattened_rows,
+            raw_root=raw_root,
+            benchmarks=benchmark_tickers,
+            enable_breadth=bool(getattr(market_context_cfg, "breadth_enabled", getattr(market_context_cfg, "enable_breadth", True))),
+            enable_gap_regime=bool(getattr(market_context_cfg, "gap_regime_enabled", getattr(market_context_cfg, "enable_gap_regime", True))),
+            source_timezone=str(getattr(config.data, "source_timezone", "UTC")),
+            market_timezone=str(getattr(config.data, "market_timezone", "America/New_York")),
+            realized_corr_enabled=bool(getattr(market_context_cfg, "realized_corr_enabled", False)),
+            return_lookbacks=tuple(getattr(market_context_cfg, "return_lookbacks", (1, 3, 12))),
+            rv_window=int(getattr(market_context_cfg, "rv_window", 12)),
+            rv_baseline_window=int(getattr(market_context_cfg, "rv_baseline_window", 78)),
+            gap_z_window_days=int(getattr(market_context_cfg, "gap_z_window_days", 60)),
+            breadth_ema_windows=tuple(getattr(market_context_cfg, "breadth_ema_windows", (3, 12))),
+            corr_liquid_subset_size=int(getattr(market_context_cfg, "corr_liquid_subset_size", 300)),
+            corr_windows_bars=tuple(getattr(market_context_cfg, "corr_windows_bars", (78, 390))),
+        )
+        if new_columns:
+            feature_columns = list(feature_columns) + new_columns
+            for ticker, sequences in ticker_sequences.items():
+                for index, sequence in enumerate(sequences):
+                    validate_feature_rows(
+                        sequence,
+                        feature_columns=new_columns,
+                        stage=f"{ticker}_market_context_{index}",
+                        raise_on_error=True,
+                    )
+
+    calendar_cfg = getattr(config, "calendar", None)
+    if flattened_rows and calendar_cfg is not None and bool(getattr(calendar_cfg, "enabled", False)):
+        calendar_columns = attach_event_calendar_features(
+            flattened_rows,
+            macro_calendar_path=getattr(calendar_cfg, "macro_calendar_path", None),
+            sec_8k_events_path=getattr(calendar_cfg, "sec_8k_events_path", None),
+            earnings_calendar_pit_path=getattr(calendar_cfg, "earnings_calendar_pit_path", None),
+            enable_pre_earnings_flags_without_pit=bool(
+                getattr(calendar_cfg, "enable_pre_earnings_flags_without_pit", False)
+            ),
+            market_timezone=str(getattr(config.data, "market_timezone", "America/New_York")),
+        )
+        if calendar_columns:
+            feature_columns = list(feature_columns) + calendar_columns
+            for ticker, sequences in ticker_sequences.items():
+                for index, sequence in enumerate(sequences):
+                    validate_feature_rows(
+                        sequence,
+                        feature_columns=calendar_columns,
+                        stage=f"{ticker}_calendar_context_{index}",
+                        raise_on_error=True,
+                    )
 
     output_path = _write_feature_rows(config.data.features_path, flattened_rows)
     ticker_list_path = _write_ticker_list(config.data.metadata_dir, list(ticker_sequences.keys()))

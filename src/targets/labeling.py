@@ -23,6 +23,12 @@ TARGET_COLUMNS = (
     "vol_direction_neutral",
     "vol_direction_label",
     "cross_sectional_rank",
+    # Event-meta target (always emitted; configurable via event_target config).
+    "event_threshold",
+    "event_label",
+    "event_direction_label",
+    "event_signed_label",
+    "event_magnitude",
 )
 
 
@@ -46,6 +52,74 @@ def _trailing_values(sequence: Sequence[dict[str, Any]], index: int, window: int
     return values
 
 
+def compute_event_threshold(
+    sequence: Sequence[dict[str, Any]],
+    index: int,
+    *,
+    horizon: int,
+    event_k: float,
+    event_vol_window: int,
+    epsilon: float = 1e-8,
+) -> float:
+    """Compute k * trailing_sigma * sqrt(horizon) using only rows <= index."""
+    event_vol_values = _trailing_values(sequence, index, event_vol_window, "log_return")
+    _, event_vol_std = _mean_and_std(event_vol_values)
+    return float(event_k) * max(event_vol_std, epsilon) * math.sqrt(float(horizon))
+
+
+def compute_direction_conditional_labels(
+    future_return: float,
+    event_threshold: float,
+    *,
+    epsilon: float = 1e-8,
+) -> tuple[int, int, int, float]:
+    """Return `(event, conditional_direction, signed_label, magnitude_weight)`."""
+    is_event = abs(float(future_return)) > float(event_threshold)
+    if is_event:
+        event_label = 1
+        event_direction_label = 1 if future_return > 0 else 0
+        event_signed_label = 2 if future_return > 0 else 0
+    else:
+        event_label = 0
+        event_direction_label = 0
+        event_signed_label = 1
+    event_magnitude_raw = abs(float(future_return)) / float(event_threshold) if event_threshold > epsilon else 0.0
+    return event_label, event_direction_label, event_signed_label, min(event_magnitude_raw, 5.0)
+
+
+def compute_event_meta_labels(
+    sequence: Sequence[dict[str, Any]],
+    index: int,
+    *,
+    future_return: float,
+    horizon: int,
+    event_k: float,
+    event_vol_window: int,
+    epsilon: float = 1e-8,
+) -> dict[str, float | int]:
+    """Compute the two-head event target payload for a row."""
+    event_threshold = compute_event_threshold(
+        sequence,
+        index,
+        horizon=horizon,
+        event_k=event_k,
+        event_vol_window=event_vol_window,
+        epsilon=epsilon,
+    )
+    event_label, event_direction_label, event_signed_label, event_magnitude = compute_direction_conditional_labels(
+        future_return,
+        event_threshold,
+        epsilon=epsilon,
+    )
+    return {
+        "event_threshold": event_threshold,
+        "event_label": event_label,
+        "event_direction_label": event_direction_label,
+        "event_signed_label": event_signed_label,
+        "event_magnitude": event_magnitude,
+    }
+
+
 def label_sequence(
     sequence: list[dict[str, Any]],
     *,
@@ -55,6 +129,8 @@ def label_sequence(
     zscore_window: int = 20,
     volatility_label_k: float = 0.25,
     regression_clip: float = 3.0,
+    event_k: float = 1.0,
+    event_vol_window: int = 78,
     epsilon: float = 1e-8,
 ) -> list[dict[str, Any]]:
     """Attach forward-return targets to a single feature sequence."""
@@ -70,6 +146,10 @@ def label_sequence(
         raise ValueError("volatility_label_k must be >= 0")
     if regression_clip <= 0:
         raise ValueError("regression_clip must be > 0")
+    if event_k < 0:
+        raise ValueError("event_k must be >= 0")
+    if event_vol_window <= 0:
+        raise ValueError("event_vol_window must be > 0")
 
     if len(sequence) <= horizon:
         return []
@@ -143,6 +223,19 @@ def label_sequence(
         current["vol_direction_neutral"] = vol_direction_neutral
         current["vol_direction_label"] = vol_direction_label
         current["cross_sectional_rank"] = 0.0
+
+        current.update(
+            compute_event_meta_labels(
+                sequence,
+                index,
+                future_return=next_log_return,
+                horizon=horizon,
+                event_k=event_k,
+                event_vol_window=event_vol_window,
+                epsilon=epsilon,
+            )
+        )
+
         labeled.append(current)
 
     return labeled
@@ -157,6 +250,8 @@ def label_ticker_sequences(
     zscore_window: int = 20,
     volatility_label_k: float = 0.25,
     regression_clip: float = 3.0,
+    event_k: float = 1.0,
+    event_vol_window: int = 78,
     epsilon: float = 1e-8,
 ) -> dict[str, list[list[dict[str, Any]]]]:
     """Label all sequences for each ticker without mutating the input mapping."""
@@ -172,6 +267,8 @@ def label_ticker_sequences(
                 zscore_window=zscore_window,
                 volatility_label_k=volatility_label_k,
                 regression_clip=regression_clip,
+                event_k=event_k,
+                event_vol_window=event_vol_window,
                 epsilon=epsilon,
             )
             if labeled_sequence:

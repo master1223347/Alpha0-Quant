@@ -17,6 +17,10 @@ class ClassificationMetrics:
     fp: int
     tn: int
     fn: int
+    average_precision: float = float("nan")
+    balanced_accuracy: float = float("nan")
+    mcc: float = float("nan")
+    macro_f1: float = float("nan")
     brier_score: float = float("nan")
     ece: float = float("nan")
     return_mae: float = float("nan")
@@ -66,6 +70,24 @@ def _binary_auc(y_true: list[int], y_prob: list[float]) -> float:
         rank += tie_end - tie_start
 
     return (rank_sum_positive - positives * (positives + 1) / 2.0) / (positives * negatives)
+
+
+def _average_precision(y_true: list[int], y_prob: list[float]) -> float:
+    positives = sum(1 for label in y_true if label == 1)
+    if positives == 0:
+        return float("nan")
+
+    sorted_pairs = sorted(zip(y_prob, y_true), key=lambda pair: pair[0], reverse=True)
+    true_positive_count = 0
+    false_positive_count = 0
+    precision_sum = 0.0
+    for _, label in sorted_pairs:
+        if label == 1:
+            true_positive_count += 1
+            precision_sum += true_positive_count / max(1, true_positive_count + false_positive_count)
+        else:
+            false_positive_count += 1
+    return precision_sum / positives
 
 
 def _brier_score(y_true: list[int], y_prob: list[float]) -> float:
@@ -156,7 +178,20 @@ def compute_classification_metrics(
     accuracy = (tp + tn) / total if total > 0 else 0.0
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    negative_precision = tn / (tn + fn) if (tn + fn) > 0 else 0.0
+    positive_f1 = (2.0 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    negative_f1 = (
+        2.0 * negative_precision * specificity / (negative_precision + specificity)
+        if (negative_precision + specificity) > 0
+        else 0.0
+    )
+    balanced_accuracy = 0.5 * (recall + specificity)
+    mcc_denominator = math.sqrt(float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)))
+    mcc = ((tp * tn) - (fp * fn)) / mcc_denominator if mcc_denominator > 0 else 0.0
+    macro_f1 = 0.5 * (positive_f1 + negative_f1)
     auc = _binary_auc(y_true, y_prob)
+    average_precision = _average_precision(y_true, y_prob)
     brier_score = _brier_score(y_true, y_prob)
     ece = _expected_calibration_error(y_true, y_prob, num_bins=calibration_bins)
 
@@ -193,6 +228,10 @@ def compute_classification_metrics(
         fp=fp,
         tn=tn,
         fn=fn,
+        average_precision=average_precision,
+        balanced_accuracy=balanced_accuracy,
+        mcc=mcc,
+        macro_f1=macro_f1,
         brier_score=brier_score,
         ece=ece,
         return_mae=return_mae,
@@ -201,4 +240,3 @@ def compute_classification_metrics(
         avg_predicted_return=avg_predicted_return,
         avg_actual_return=avg_actual_return,
     )
-

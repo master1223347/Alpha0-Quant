@@ -19,14 +19,65 @@ LOGGER = get_logger(__name__)
 def _load_yaml(path: str | Path) -> dict[str, Any]:
     try:
         import yaml
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError("PyYAML is required to load experiment YAML files") from exc
+    except ModuleNotFoundError:
+        return _load_simple_yaml(path)
 
     with Path(path).open("r", encoding="utf-8") as handle:
         loaded = yaml.safe_load(handle) or {}
     if not isinstance(loaded, dict):
         raise ValueError(f"Expected YAML mapping in {path}")
     return loaded
+
+
+def _parse_simple_yaml_scalar(value: str) -> Any:
+    value = value.strip()
+    if value in {"", "null", "Null", "NULL", "~"}:
+        return None
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if value.startswith("[") and value.endswith("]"):
+        inner = value[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_simple_yaml_scalar(part.strip()) for part in inner.split(",")]
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        return value[1:-1]
+    try:
+        if any(marker in value for marker in (".", "e", "E")):
+            return float(value)
+        return int(value)
+    except ValueError:
+        return value
+
+
+def _load_simple_yaml(path: str | Path) -> dict[str, Any]:
+    """Minimal fallback parser for the repo's simple experiment YAML files."""
+    root: dict[str, Any] = {}
+    stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+                continue
+            line = raw_line.rstrip("\n")
+            indent = len(line) - len(line.lstrip(" "))
+            stripped = line.strip()
+            if ":" not in stripped:
+                continue
+            key, value = stripped.split(":", 1)
+            key = key.strip()
+            while stack and indent <= stack[-1][0]:
+                stack.pop()
+            parent = stack[-1][1]
+            if value.strip() == "":
+                child: dict[str, Any] = {}
+                parent[key] = child
+                stack.append((indent, child))
+            else:
+                parent[key] = _parse_simple_yaml_scalar(value)
+    return root
 
 
 def load_experiment_config(path: str | Path) -> Any:
@@ -60,11 +111,17 @@ def run_experiment(
         dataset_artifacts=train_artifacts.dataset,
         checkpoint_path=train_artifacts.training.best_checkpoint_path,
     )
+    walk_forward_retrain_result = None
+    if bool(getattr(config.walk_forward_retrain, "enabled", False)):
+        from src.pipeline.walk_forward_retrain import run_walk_forward_retrain
+
+        walk_forward_retrain_result = run_walk_forward_retrain(config=config).to_dict()
 
     result = {
         "config": config_to_dict(config),
         "training": train_artifacts.training.to_dict(),
         "evaluation_report_path": eval_artifacts.report_path,
+        "walk_forward_retrain": walk_forward_retrain_result,
     }
 
     result_path = Path(config.training.metrics_path).with_name("experiment_result.json")

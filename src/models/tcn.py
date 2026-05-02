@@ -13,6 +13,8 @@ except ModuleNotFoundError:
     nn = None
     F = None
 
+from src.models.heads_event import EventMetaHead
+
 
 def _coerce_sequence_input(inputs: Any) -> Any:
     if inputs.dim() == 2:
@@ -63,6 +65,7 @@ if nn is not None:
             multitask_output: bool = True,
             include_rank_score: bool = False,
             include_regime_logits: bool = False,
+            include_event_heads: bool = False,
             regime_classes: int = 3,
             distribution: str = "student_t",
             probabilistic_output: bool = True,
@@ -78,6 +81,7 @@ if nn is not None:
             self.multitask_output = multitask_output
             self.include_rank_score = include_rank_score
             self.include_regime_logits = include_regime_logits
+            self.include_event_heads = bool(include_event_heads)
             self.distribution = distribution
             self.probabilistic_output = bool(probabilistic_output)
 
@@ -112,6 +116,7 @@ if nn is not None:
             self.threshold_head = nn.Linear(latent_dim, 3)
             self.rank_head = nn.Linear(latent_dim, 1) if include_rank_score else None
             self.regime_head = nn.Linear(latent_dim, regime_classes) if include_regime_logits else None
+            self.event_head = EventMetaHead(latent_dim) if include_event_heads else None
 
         def _encode(self, inputs: torch.Tensor) -> torch.Tensor:
             sequence = _coerce_sequence_input(inputs)
@@ -136,6 +141,8 @@ if nn is not None:
                 outputs["rank_score"] = self.rank_head(latent).squeeze(-1)
             if self.regime_head is not None:
                 outputs["regime_logits"] = self.regime_head(latent)
+            if self.event_head is not None:
+                outputs.update(self.event_head(latent))
             return outputs
 
         def forward(self, inputs: torch.Tensor) -> dict[str, torch.Tensor] | torch.Tensor:

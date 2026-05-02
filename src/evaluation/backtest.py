@@ -6,6 +6,7 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from src.evaluation.execution_models import simulate_execution_costs
 from src.evaluation.regime import adapt_position_to_regime, detect_market_regimes
 
 
@@ -37,6 +38,10 @@ class BacktestReport:
     regime_transition_matrix: list[list[float]] | None = None
     regime_state_mapping: dict[str, str] | None = None
     regime_policies: dict[str, str] | None = None
+    execution_model_enabled: bool = False
+    modeled_execution_cost_pnl: float = 0.0
+    rejected_trade_count: int = 0
+    avg_modeled_cost_bps: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -157,6 +162,18 @@ def run_backtest(
     regime_fit_next_close: list[float] | None = None,
     regime_fit_timestamps: list[Any] | None = None,
     regime_fit_tickers: list[str] | None = None,
+    execution_model_enabled: bool = False,
+    use_open_auction: bool = True,
+    use_close_auction: bool = True,
+    regular_max_pov: float = 0.05,
+    open_max_pov: float = 0.03,
+    close_max_pov: float = 0.05,
+    open_penalty_bars: int = 3,
+    close_penalty_bars: int = 3,
+    base_spread_bps: float = 6.0,
+    base_impact_bps: float = 25.0,
+    order_notional_fraction: float = 0.01,
+    reject_excess_pov: bool = False,
 ) -> BacktestReport:
     """Run a threshold-based long/short strategy."""
     if probabilities is None and (up_probabilities is None or down_probabilities is None):
@@ -330,7 +347,7 @@ def run_backtest(
             regime_state_mapping = None
 
     signal_positions: list[int] = []
-    positions: list[int] = []
+    positions: list[float] = []
     gross_returns: list[float] = []
     net_returns: list[float] = []
 
@@ -341,6 +358,9 @@ def run_backtest(
     cost_fraction = (float(cost_bps_per_trade) + float(slippage_bps)) / 10000.0
     transaction_cost_pnl = 0.0
     slippage_pnl = 0.0
+    modeled_execution_cost_pnl = 0.0
+    rejected_trade_count = 0
+    modeled_cost_bps_values: list[float] = []
 
     for index, (up_probability, down_probability) in enumerate(zip(up_probabilities, down_probabilities)):
         raw_position = 0
@@ -395,7 +415,43 @@ def run_backtest(
         if execution_index < len(executed_positions):
             executed_positions[execution_index] = position
 
-    for position, current_close, future_close in zip(executed_positions, close, next_close):
+    for index, (requested_position, current_close, future_close) in enumerate(zip(executed_positions, close, next_close)):
+        position = float(requested_position)
+        requested_turnover = abs(position - float(previous_position))
+        modeled_cost_bps: float | None = None
+        if execution_model_enabled and requested_turnover > 0:
+            sigma_5m = 0.001
+            if sigma_values is not None and index < len(sigma_values):
+                try:
+                    sigma_5m = max(1e-8, float(sigma_values[index]))
+                except (TypeError, ValueError):
+                    sigma_5m = 0.001
+            timestamp = timestamps[index] if timestamps is not None and index < len(timestamps) else None
+            requested_pov = max(0.0, float(order_notional_fraction) * requested_turnover)
+            breakdown = simulate_execution_costs(
+                timestamp=timestamp,
+                bar_index=index,
+                total_bars=len(executed_positions),
+                requested_pov=requested_pov,
+                sigma_5m=sigma_5m,
+                use_open_auction=use_open_auction,
+                use_close_auction=use_close_auction,
+                regular_max_pov=regular_max_pov,
+                open_max_pov=open_max_pov,
+                close_max_pov=close_max_pov,
+                open_penalty_bars=open_penalty_bars,
+                close_penalty_bars=close_penalty_bars,
+                base_spread_bps=base_spread_bps,
+                base_impact_bps=base_impact_bps,
+                reject_excess_pov=reject_excess_pov,
+            )
+            if breakdown.filled_fraction < 1.0:
+                position = float(previous_position) + (position - float(previous_position)) * breakdown.filled_fraction
+            if requested_turnover > 0 and abs(position - float(previous_position)) <= 1e-12:
+                rejected_trade_count += 1
+            modeled_cost_bps = float(breakdown.total_cost_bps)
+            modeled_cost_bps_values.append(modeled_cost_bps)
+
         if position > 0:
             long_count += 1
         elif position < 0:
@@ -416,14 +472,20 @@ def run_backtest(
         else:
             raw_return = 0.0
         gross_strategy_return = position * raw_return
-        trade_cost = cost_fraction * turnover
+        if execution_model_enabled and turnover > 0 and modeled_cost_bps is not None:
+            trade_cost = (modeled_cost_bps / 10000.0) * turnover
+            modeled_execution_cost_pnl -= trade_cost
+            transaction_cost_pnl -= (modeled_cost_bps / 2.0 / 10000.0) * turnover
+            slippage_pnl -= (modeled_cost_bps / 2.0 / 10000.0) * turnover
+        else:
+            trade_cost = cost_fraction * turnover
+            transaction_cost_pnl -= (float(cost_bps_per_trade) / 10000.0) * turnover
+            slippage_pnl -= (float(slippage_bps) / 10000.0) * turnover
         net_strategy_return = gross_strategy_return - trade_cost
 
         positions.append(position)
         gross_returns.append(gross_strategy_return)
         net_returns.append(net_strategy_return)
-        transaction_cost_pnl -= (float(cost_bps_per_trade) / 10000.0) * turnover
-        slippage_pnl -= (float(slippage_bps) / 10000.0) * turnover
         previous_position = position
 
     gross_pnl = sum(gross_returns)
@@ -482,4 +544,10 @@ def run_backtest(
         regime_transition_matrix=regime_transition_matrix,
         regime_state_mapping=regime_state_mapping,
         regime_policies=regime_policies if regime_enabled else None,
+        execution_model_enabled=bool(execution_model_enabled),
+        modeled_execution_cost_pnl=float(modeled_execution_cost_pnl),
+        rejected_trade_count=int(rejected_trade_count),
+        avg_modeled_cost_bps=(
+            float(sum(modeled_cost_bps_values) / len(modeled_cost_bps_values)) if modeled_cost_bps_values else 0.0
+        ),
     )

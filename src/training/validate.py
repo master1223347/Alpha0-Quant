@@ -16,6 +16,12 @@ from src.models.losses_prob import (
     extract_threshold_logits,
     extract_threshold_target,
 )
+from src.models.losses_event import (
+    extract_event_direction_logit,
+    extract_event_direction_target,
+    extract_event_logit,
+    extract_event_target,
+)
 
 
 @dataclass(slots=True)
@@ -40,10 +46,23 @@ class ValidationResult:
     tickers: list[str]
     directional_sample_count: int
     total_sample_count: int
+    event_probabilities: list[float] | None = None
+    event_labels: list[int] | None = None
+    event_direction_probabilities: list[float] | None = None
+    event_direction_labels: list[int] | None = None
+    up_event_probabilities: list[float] | None = None
+    down_event_probabilities: list[float] | None = None
+    no_event_probabilities: list[float] | None = None
+    event_metrics: ClassificationMetrics | None = None
+    event_direction_metrics: ClassificationMetrics | None = None
 
     def to_dict(self) -> dict[str, Any]:
         output = asdict(self)
         output["metrics"] = self.metrics.to_dict()
+        if self.event_metrics is not None:
+            output["event_metrics"] = self.event_metrics.to_dict()
+        if self.event_direction_metrics is not None:
+            output["event_direction_metrics"] = self.event_direction_metrics.to_dict()
         return output
 
 
@@ -95,6 +114,10 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
     sigma_values: list[float] = []
     timestamp_values: list[Any] = []
     ticker_values: list[str] = []
+    event_probabilities: list[float] = []
+    event_labels: list[int] = []
+    event_direction_probabilities: list[float] = []
+    event_direction_labels: list[int] = []
 
     with torch.no_grad():
         for batch in dataloader:
@@ -119,6 +142,24 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
                 neutral_probabilities.extend(float(value) for value in probs[:, 1].reshape(-1).tolist())
                 up_probabilities.extend(float(value) for value in probs[:, 2].reshape(-1).tolist())
                 confidence_scores.extend(float(max(row[0], row[2])) for row in probs.tolist())
+
+            event_logit = extract_event_logit(outputs)
+            if event_logit is not None:
+                event_probs = torch.sigmoid(event_logit.reshape(-1)).detach().cpu().tolist()
+                event_probabilities.extend(float(value) for value in event_probs)
+                event_target = extract_event_target(batch, device=device)
+                if event_target is not None:
+                    event_labels.extend(int(round(float(value))) for value in event_target.detach().cpu().reshape(-1).tolist())
+
+            event_direction_logit = extract_event_direction_logit(outputs)
+            if event_direction_logit is not None:
+                event_dir_probs = torch.sigmoid(event_direction_logit.reshape(-1)).detach().cpu().tolist()
+                event_direction_probabilities.extend(float(value) for value in event_dir_probs)
+                event_direction_target = extract_event_direction_target(batch, device=device)
+                if event_direction_target is not None:
+                    event_direction_labels.extend(
+                        int(round(float(value))) for value in event_direction_target.detach().cpu().reshape(-1).tolist()
+                    )
 
             forward_return = extract_forward_return(batch, device=device)
             if forward_return is not None:
@@ -185,6 +226,38 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
         neutral_probabilities = [0.0 for _ in probabilities]
         confidence_scores = [max(up_probability, down_probability) for up_probability, down_probability in zip(up_probabilities, down_probabilities)]
 
+    up_event_probabilities: list[float] = []
+    down_event_probabilities: list[float] = []
+    no_event_probabilities: list[float] = []
+    if (
+        event_probabilities
+        and event_direction_probabilities
+        and len(event_probabilities) == len(event_direction_probabilities)
+        and len(event_probabilities) == len(close_values)
+    ):
+        up_event_probabilities = [
+            max(0.0, min(1.0, float(event_probabilities[index]) * float(event_direction_probabilities[index])))
+            for index in range(len(event_probabilities))
+        ]
+        down_event_probabilities = [
+            max(0.0, min(1.0, float(event_probabilities[index]) * (1.0 - float(event_direction_probabilities[index]))))
+            for index in range(len(event_probabilities))
+        ]
+        no_event_probabilities = [
+            max(0.0, min(1.0, 1.0 - float(value))) for value in event_probabilities
+        ]
+        probabilities = []
+        for up_probability, down_probability in zip(up_event_probabilities, down_event_probabilities):
+            denominator = float(up_probability + down_probability)
+            probabilities.append(float(up_probability / denominator) if denominator > 1e-8 else 0.5)
+        up_probabilities = list(up_event_probabilities)
+        down_probabilities = list(down_event_probabilities)
+        neutral_probabilities = list(no_event_probabilities)
+        confidence_scores = [
+            max(float(up_probability), float(down_probability))
+            for up_probability, down_probability in zip(up_probabilities, down_probabilities)
+        ]
+
     if mean_returns and sigma_values and len(mean_returns) == len(sigma_values) == len(logits_list):
         floor = 0.10
         raw_scores = []
@@ -232,6 +305,29 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
     else:
         metrics = _empty_metrics()
 
+    event_metrics: ClassificationMetrics | None = None
+    if event_labels and len(event_labels) == len(event_probabilities):
+        event_metrics = compute_classification_metrics(
+            event_labels,
+            event_probabilities,
+        )
+
+    event_direction_metrics: ClassificationMetrics | None = None
+    if (
+        event_labels
+        and event_direction_labels
+        and event_direction_probabilities
+        and len(event_labels) == len(event_direction_labels) == len(event_direction_probabilities)
+    ):
+        conditional_indices = [index for index, label in enumerate(event_labels) if int(label) == 1]
+        conditional_labels = [event_direction_labels[index] for index in conditional_indices]
+        conditional_probs = [event_direction_probabilities[index] for index in conditional_indices]
+        if conditional_labels and len(set(conditional_labels)) > 1:
+            event_direction_metrics = compute_classification_metrics(
+                conditional_labels,
+                conditional_probs,
+            )
+
     return ValidationResult(
         loss=avg_loss,
         metrics=metrics,
@@ -253,4 +349,13 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
         tickers=ticker_values,
         directional_sample_count=int(len(directional_labels)),
         total_sample_count=int(len(probabilities)),
+        event_probabilities=event_probabilities or None,
+        event_labels=event_labels or None,
+        event_direction_probabilities=event_direction_probabilities or None,
+        event_direction_labels=event_direction_labels or None,
+        up_event_probabilities=up_event_probabilities or None,
+        down_event_probabilities=down_event_probabilities or None,
+        no_event_probabilities=no_event_probabilities or None,
+        event_metrics=event_metrics,
+        event_direction_metrics=event_direction_metrics,
     )
