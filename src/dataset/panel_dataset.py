@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from src.events.registry import EVENT_CONTEXT_COLUMNS, EVENT_TARGET_COLUMNS
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -31,11 +33,7 @@ RESERVED_COLUMNS = {
     "vol_direction_neutral",
     "vol_direction_label",
     "cross_sectional_rank",
-    "event_threshold",
-    "event_label",
-    "event_direction_label",
-    "event_signed_label",
-    "event_magnitude",
+    *EVENT_TARGET_COLUMNS,
 }
 
 
@@ -84,6 +82,11 @@ class PanelDatasetArtifacts:
     event_direction_label: "np.ndarray | None" = None
     event_signed_label: "np.ndarray | None" = None
     event_magnitude: "np.ndarray | None" = None
+    event_opportunity_label: "np.ndarray | None" = None
+    event_drift_label: "np.ndarray | None" = None
+    event_reversal_label: "np.ndarray | None" = None
+    event_absorption_label: "np.ndarray | None" = None
+    event_context: "dict[str, np.ndarray] | None" = None
 
     def __len__(self) -> int:
         return int(self.y.shape[0])
@@ -149,6 +152,11 @@ def build_panel_dataset(
     event_direction_values: list[float] = []
     event_signed_values: list[float] = []
     event_magnitude_values: list[float] = []
+    event_opportunity_values: list[float] = []
+    event_drift_values: list[float] = []
+    event_reversal_values: list[float] = []
+    event_absorption_values: list[float] = []
+    event_context_values: dict[str, list[float]] = {column: [] for column in EVENT_CONTEXT_COLUMNS}
     timestamps: list[datetime] = []
     tickers: list[str] = []
 
@@ -196,6 +204,12 @@ def build_panel_dataset(
             event_direction_values.append(float(center_row.get(event_direction_key, center_row.get("label", 0.0))))
             event_signed_values.append(float(center_row.get(event_signed_key, 1.0)))
             event_magnitude_values.append(float(center_row.get(event_magnitude_key, 0.0)))
+            event_opportunity_values.append(float(center_row.get("event_opportunity_label", 0.0)))
+            event_drift_values.append(float(center_row.get("post_event_drift_label_h1", 1.0)))
+            event_reversal_values.append(float(center_row.get("event_reversal_label", 0.0)))
+            event_absorption_values.append(float(center_row.get("event_absorption_label", 0.0)))
+            for column in EVENT_CONTEXT_COLUMNS:
+                event_context_values[column].append(float(center_row.get(column, 0.0)))
             timestamps.append(center_row["timestamp"])
             tickers.append(str(center_row.get("ticker", "")))
 
@@ -221,6 +235,11 @@ def build_panel_dataset(
             event_direction_label=empty_aux.copy(),
             event_signed_label=empty_aux.copy(),
             event_magnitude=empty_aux.copy(),
+            event_opportunity_label=empty_aux.copy(),
+            event_drift_label=empty_aux.copy(),
+            event_reversal_label=empty_aux.copy(),
+            event_absorption_label=empty_aux.copy(),
+            event_context={column: empty_aux.copy() for column in EVENT_CONTEXT_COLUMNS},
         )
 
     return PanelDatasetArtifacts(
@@ -240,6 +259,11 @@ def build_panel_dataset(
         event_direction_label=np.asarray(event_direction_values, dtype=np.float32),
         event_signed_label=np.asarray(event_signed_values, dtype=np.int64),
         event_magnitude=np.asarray(event_magnitude_values, dtype=np.float32),
+        event_opportunity_label=np.asarray(event_opportunity_values, dtype=np.float32),
+        event_drift_label=np.asarray(event_drift_values, dtype=np.int64),
+        event_reversal_label=np.asarray(event_reversal_values, dtype=np.float32),
+        event_absorption_label=np.asarray(event_absorption_values, dtype=np.float32),
+        event_context={column: np.asarray(values, dtype=np.float32) for column, values in event_context_values.items()},
     )
 
 
@@ -283,6 +307,30 @@ class PanelTensorDataset:
             if artifacts.event_magnitude is not None
             else None
         )
+        self.event_opportunity_label = (
+            torch.tensor(artifacts.event_opportunity_label, dtype=torch.float32)
+            if artifacts.event_opportunity_label is not None
+            else None
+        )
+        self.event_drift_label = (
+            torch.tensor(artifacts.event_drift_label, dtype=torch.long)
+            if artifacts.event_drift_label is not None
+            else None
+        )
+        self.event_reversal_label = (
+            torch.tensor(artifacts.event_reversal_label, dtype=torch.float32)
+            if artifacts.event_reversal_label is not None
+            else None
+        )
+        self.event_absorption_label = (
+            torch.tensor(artifacts.event_absorption_label, dtype=torch.float32)
+            if artifacts.event_absorption_label is not None
+            else None
+        )
+        self.event_context = {
+            key: torch.tensor(value, dtype=torch.float32)
+            for key, value in (artifacts.event_context or {}).items()
+        }
         self.timestamps = artifacts.timestamps
         self.tickers = artifacts.tickers
         self.feature_columns = artifacts.feature_columns
@@ -314,4 +362,14 @@ class PanelTensorDataset:
             sample["event_signed_label"] = self.event_signed_label[index]
         if self.event_magnitude is not None:
             sample["event_magnitude"] = self.event_magnitude[index]
+        if self.event_opportunity_label is not None:
+            sample["event_opportunity_label"] = self.event_opportunity_label[index]
+        if self.event_drift_label is not None:
+            sample["event_drift_label"] = self.event_drift_label[index]
+        if self.event_reversal_label is not None:
+            sample["event_reversal_label"] = self.event_reversal_label[index]
+        if self.event_absorption_label is not None:
+            sample["event_absorption_label"] = self.event_absorption_label[index]
+        for key, values in self.event_context.items():
+            sample[key] = values[index]
         return sample

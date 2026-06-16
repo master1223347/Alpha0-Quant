@@ -42,6 +42,30 @@ def extract_event_direction_logit(outputs: Any) -> Any | None:
     )
 
 
+def extract_event_opportunity_logit(outputs: Any) -> Any | None:
+    if not isinstance(outputs, dict):
+        return None
+    return _extract_from_dict(outputs, ("event_opportunity_logit", "event_opportunity_logits"))
+
+
+def extract_event_drift_logits(outputs: Any) -> Any | None:
+    if not isinstance(outputs, dict):
+        return None
+    return _extract_from_dict(outputs, ("event_drift_logits", "post_event_drift_logits"))
+
+
+def extract_event_reversal_logit(outputs: Any) -> Any | None:
+    if not isinstance(outputs, dict):
+        return None
+    return _extract_from_dict(outputs, ("event_reversal_logit", "event_reversal_logits"))
+
+
+def extract_event_absorption_logit(outputs: Any) -> Any | None:
+    if not isinstance(outputs, dict):
+        return None
+    return _extract_from_dict(outputs, ("event_absorption_logit", "event_absorption_logits"))
+
+
 def _resolve_tensor(value: Any, *, device: Any, dtype: Any | None = None) -> Any | None:
     if value is None:
         return None
@@ -86,6 +110,42 @@ def extract_event_sample_weight(
         return None
     weights = _resolve_tensor(value, device=device, dtype=torch.float32).reshape(-1)
     return torch.clamp(weights, min=0.0, max=float(cap))
+
+
+def extract_event_opportunity_target(batch: dict[str, Any] | None, *, device: Any) -> Any | None:
+    if batch is None:
+        return None
+    target = _extract_from_dict(batch, ("event_opportunity_label", "event_opportunity_target"))
+    if target is None:
+        return None
+    return _resolve_tensor(target, device=device, dtype=torch.float32).reshape(-1)
+
+
+def extract_event_drift_target(batch: dict[str, Any] | None, *, device: Any) -> Any | None:
+    if batch is None:
+        return None
+    target = _extract_from_dict(batch, ("event_drift_label", "post_event_drift_label_h1"))
+    if target is None:
+        return None
+    return _resolve_tensor(target, device=device, dtype=torch.long).reshape(-1)
+
+
+def extract_event_reversal_target(batch: dict[str, Any] | None, *, device: Any) -> Any | None:
+    if batch is None:
+        return None
+    target = _extract_from_dict(batch, ("event_reversal_label", "event_reversal_target"))
+    if target is None:
+        return None
+    return _resolve_tensor(target, device=device, dtype=torch.float32).reshape(-1)
+
+
+def extract_event_absorption_target(batch: dict[str, Any] | None, *, device: Any) -> Any | None:
+    if batch is None:
+        return None
+    target = _extract_from_dict(batch, ("event_absorption_label", "event_absorption_target"))
+    if target is None:
+        return None
+    return _resolve_tensor(target, device=device, dtype=torch.float32).reshape(-1)
 
 
 def event_focal_loss(

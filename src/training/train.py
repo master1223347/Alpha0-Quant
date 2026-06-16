@@ -113,6 +113,10 @@ def train_model(config: Any, dataloaders: dict[str, Any], model: Any) -> Trainin
         calibration_aux_weight=float(getattr(config.training, "calibration_aux_weight", 0.0)),
         event_weight=float(getattr(config.training, "event_loss_weight", 0.0)),
         event_direction_weight=float(getattr(config.training, "event_direction_loss_weight", 0.0)),
+        event_opportunity_weight=float(getattr(config.training, "event_opportunity_loss_weight", 0.0)),
+        event_drift_weight=float(getattr(config.training, "event_drift_loss_weight", 0.0)),
+        event_reversal_weight=float(getattr(config.training, "event_reversal_loss_weight", 0.0)),
+        event_absorption_weight=float(getattr(config.training, "event_absorption_loss_weight", 0.0)),
         event_focal_gamma=float(getattr(config.training, "event_focal_gamma", 2.0)),
         event_sample_weight_cap=float(getattr(config.training, "event_sample_weight_cap", 2.0)),
     ).to(device)

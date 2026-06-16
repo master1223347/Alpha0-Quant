@@ -6,6 +6,7 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from src.events.registry import EVENT_CONTEXT_COLUMNS
 from src.evaluation.metrics import ClassificationMetrics, compute_classification_metrics, logits_to_probabilities
 from src.models.losses_prob import (
     extract_direction_target,
@@ -22,6 +23,9 @@ from src.models.losses_event import (
     extract_event_logit,
     extract_event_target,
 )
+
+
+EVENT_CONTEXT_KEYS = EVENT_CONTEXT_COLUMNS
 
 
 @dataclass(slots=True)
@@ -55,6 +59,7 @@ class ValidationResult:
     no_event_probabilities: list[float] | None = None
     event_metrics: ClassificationMetrics | None = None
     event_direction_metrics: ClassificationMetrics | None = None
+    event_context: dict[str, list[float]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         output = asdict(self)
@@ -118,6 +123,7 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
     event_labels: list[int] = []
     event_direction_probabilities: list[float] = []
     event_direction_labels: list[int] = []
+    event_context: dict[str, list[float]] = {key: [] for key in EVENT_CONTEXT_KEYS}
 
     with torch.no_grad():
         for batch in dataloader:
@@ -202,6 +208,15 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
                     ticker_values.extend(str(value) for value in batch_tickers)
                 else:
                     ticker_values.append(str(batch_tickers))
+            for key in EVENT_CONTEXT_KEYS:
+                if key in batch:
+                    value = batch[key]
+                    if hasattr(value, "detach"):
+                        event_context[key].extend(float(item) for item in value.detach().cpu().reshape(-1).tolist())
+                    elif isinstance(value, (list, tuple)):
+                        event_context[key].extend(float(item) for item in value)
+                    else:
+                        event_context[key].append(float(value))
 
             mean_return = extract_mean_return(outputs)
             if mean_return is not None:
@@ -358,4 +373,5 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
         no_event_probabilities=no_event_probabilities or None,
         event_metrics=event_metrics,
         event_direction_metrics=event_direction_metrics,
+        event_context={key: values for key, values in event_context.items() if values},
     )

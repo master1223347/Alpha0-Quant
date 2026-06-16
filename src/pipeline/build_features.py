@@ -25,6 +25,7 @@ from src.features.sector_mapping import attach_sector_id_feature
 from src.features.advanced_volatility import build_realized_volatility_features
 from src.features.time_features import build_time_features
 from src.features.volume_features import build_volume_features
+from src.events.event_features import attach_event_features
 from src.utils.logger import get_logger
 from src.utils.paths import ensure_parent
 
@@ -371,6 +372,21 @@ def build_feature_store(
                         stage=f"{ticker}_calendar_context_{index}",
                         raise_on_error=True,
                     )
+
+    events_cfg = getattr(config, "events", None)
+    if flattened_rows and events_cfg is not None and bool(getattr(events_cfg, "enabled", False)):
+        event_columns, event_report = attach_event_features(flattened_rows, config)
+        if event_columns:
+            feature_columns = list(dict.fromkeys(list(feature_columns) + event_columns))
+            for ticker, sequences in ticker_sequences.items():
+                for index, sequence in enumerate(sequences):
+                    validate_feature_rows(
+                        sequence,
+                        feature_columns=event_columns,
+                        stage=f"{ticker}_event_context_{index}",
+                        raise_on_error=True,
+                    )
+        LOGGER.info("Event feature report: %s", event_report)
 
     output_path = _write_feature_rows(config.data.features_path, flattened_rows)
     ticker_list_path = _write_ticker_list(config.data.metadata_dir, list(ticker_sequences.keys()))

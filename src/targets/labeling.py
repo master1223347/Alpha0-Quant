@@ -29,6 +29,14 @@ TARGET_COLUMNS = (
     "event_direction_label",
     "event_signed_label",
     "event_magnitude",
+    "event_opportunity_label",
+    "event_adjusted_vol_direction_label",
+    "post_event_drift_label_h1",
+    "post_event_drift_label_h3",
+    "post_event_drift_label_h6",
+    "post_event_drift_label_h12",
+    "event_reversal_label",
+    "event_absorption_label",
 )
 
 
@@ -131,6 +139,10 @@ def label_sequence(
     regression_clip: float = 3.0,
     event_k: float = 1.0,
     event_vol_window: int = 78,
+    event_vol_multiplier: float = 1.25,
+    post_event_horizons: Sequence[int] = (1, 3, 6, 12),
+    event_reversal_horizon: int = 6,
+    event_absorption_horizon: int = 6,
     epsilon: float = 1e-8,
 ) -> list[dict[str, Any]]:
     """Attach forward-return targets to a single feature sequence."""
@@ -150,6 +162,8 @@ def label_sequence(
         raise ValueError("event_k must be >= 0")
     if event_vol_window <= 0:
         raise ValueError("event_vol_window must be > 0")
+    if event_vol_multiplier <= 0:
+        raise ValueError("event_vol_multiplier must be > 0")
 
     if len(sequence) <= horizon:
         return []
@@ -207,6 +221,46 @@ def label_sequence(
             vol_direction_down = 0
             vol_direction_neutral = 1
 
+        is_event_window = float(current.get("is_event_window", 0.0)) > 0.0
+        adjusted_threshold = vol_threshold * (float(event_vol_multiplier) if is_event_window else 1.0)
+        if next_log_return > adjusted_threshold:
+            event_adjusted_vol_direction_label = 2
+        elif next_log_return < -adjusted_threshold:
+            event_adjusted_vol_direction_label = 0
+        else:
+            event_adjusted_vol_direction_label = 1
+        event_opportunity_label = 1 if is_event_window and abs(next_log_return) > adjusted_threshold else 0
+
+        drift_labels: dict[str, int] = {}
+        for drift_horizon in post_event_horizons:
+            horizon_value = int(drift_horizon)
+            key = f"post_event_drift_label_h{horizon_value}"
+            if index + horizon_value < len(sequence) and is_event_window:
+                future_close = float(sequence[index + horizon_value]["close"])
+                cumulative = math.log(future_close / current_close) if current_close > 0 and future_close > 0 else 0.0
+                drift_labels[key] = 2 if cumulative > adjusted_threshold else 0 if cumulative < -adjusted_threshold else 1
+            else:
+                drift_labels[key] = 1
+        for fixed_horizon in (1, 3, 6, 12):
+            drift_labels.setdefault(f"post_event_drift_label_h{fixed_horizon}", 1)
+
+        reversal_label = 0
+        reversal_horizon = int(max(1, event_reversal_horizon))
+        if is_event_window and index + reversal_horizon < len(sequence):
+            first_close = float(sequence[min(index + 1, len(sequence) - 1)]["close"])
+            final_close = float(sequence[index + reversal_horizon]["close"])
+            first_move = math.log(first_close / current_close) if current_close > 0 and first_close > 0 else 0.0
+            final_move = math.log(final_close / current_close) if current_close > 0 and final_close > 0 else 0.0
+            reversal_label = 1 if abs(first_move) > epsilon and first_move * final_move < 0 else 0
+
+        absorption_label = 0
+        absorption_horizon = int(max(1, event_absorption_horizon))
+        if is_event_window and index + absorption_horizon < len(sequence):
+            final_close = float(sequence[index + absorption_horizon]["close"])
+            cumulative = math.log(final_close / current_close) if current_close > 0 and final_close > 0 else 0.0
+            importance = float(current.get("max_event_importance_last_1h", current.get("importance_score", 0.0)) or 0.0)
+            absorption_label = 1 if importance >= 0.5 and abs(cumulative) <= adjusted_threshold else 0
+
         current["next_close"] = next_close
         current["next_log_return"] = next_log_return
         current["vol_target"] = next_log_return / max(vol_std, epsilon)
@@ -223,6 +277,11 @@ def label_sequence(
         current["vol_direction_neutral"] = vol_direction_neutral
         current["vol_direction_label"] = vol_direction_label
         current["cross_sectional_rank"] = 0.0
+        current["event_opportunity_label"] = event_opportunity_label
+        current["event_adjusted_vol_direction_label"] = event_adjusted_vol_direction_label
+        current["event_reversal_label"] = reversal_label
+        current["event_absorption_label"] = absorption_label
+        current.update(drift_labels)
 
         current.update(
             compute_event_meta_labels(
@@ -252,6 +311,10 @@ def label_ticker_sequences(
     regression_clip: float = 3.0,
     event_k: float = 1.0,
     event_vol_window: int = 78,
+    event_vol_multiplier: float = 1.25,
+    post_event_horizons: Sequence[int] = (1, 3, 6, 12),
+    event_reversal_horizon: int = 6,
+    event_absorption_horizon: int = 6,
     epsilon: float = 1e-8,
 ) -> dict[str, list[list[dict[str, Any]]]]:
     """Label all sequences for each ticker without mutating the input mapping."""
@@ -269,6 +332,10 @@ def label_ticker_sequences(
                 regression_clip=regression_clip,
                 event_k=event_k,
                 event_vol_window=event_vol_window,
+                event_vol_multiplier=event_vol_multiplier,
+                post_event_horizons=post_event_horizons,
+                event_reversal_horizon=event_reversal_horizon,
+                event_absorption_horizon=event_absorption_horizon,
                 epsilon=epsilon,
             )
             if labeled_sequence:

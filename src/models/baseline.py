@@ -11,7 +11,7 @@ except ModuleNotFoundError:
     nn = None
 
 from src.models.encoder import MLPEncoder
-from src.models.heads_event import EventMetaHead
+from src.models.heads_event import EventFeatureScalarEmbeddings, EventMetaHead
 
 
 if nn is not None:
@@ -31,6 +31,7 @@ if nn is not None:
             include_rank_score: bool = False,
             include_regime_logits: bool = False,
             include_event_heads: bool = False,
+            event_feature_indices: dict[str, int] | None = None,
             regime_classes: int = 3,
             distribution: str = "gaussian",
         ) -> None:
@@ -47,6 +48,7 @@ if nn is not None:
             self.include_rank_score = bool(include_rank_score)
             self.include_regime_logits = bool(include_regime_logits)
             self.include_event_heads = bool(include_event_heads)
+            self.event_embeddings = EventFeatureScalarEmbeddings(event_feature_indices)
             self.distribution = distribution
             self.direction_head = nn.Linear(self.encoder.output_dim, 1)
             self.mean_head = nn.Linear(self.encoder.output_dim, 1)
@@ -57,6 +59,7 @@ if nn is not None:
             self.event_head = EventMetaHead(self.encoder.output_dim) if include_event_heads else None
 
         def forward(self, inputs: torch.Tensor) -> dict[str, torch.Tensor] | torch.Tensor:
+            inputs = self.event_embeddings(inputs)
             flattened = inputs.reshape(inputs.size(0), -1)
             encoded = self.encoder(flattened)
             direction_logit = self.direction_head(encoded).squeeze(-1)

@@ -11,7 +11,7 @@ except ModuleNotFoundError:
     torch = None
     nn = None
 
-from src.models.heads_event import EventMetaHead
+from src.models.heads_event import EventFeatureScalarEmbeddings, EventMetaHead
 
 
 def _coerce_sequence_input(inputs: Any) -> Any:
@@ -42,6 +42,7 @@ if nn is not None:
             include_rank_score: bool = False,
             include_regime_logits: bool = False,
             include_event_heads: bool = False,
+            event_feature_indices: dict[str, int] | None = None,
             regime_classes: int = 3,
             distribution: str = "gaussian",
             probabilistic_output: bool = True,
@@ -58,6 +59,7 @@ if nn is not None:
             self.include_rank_score = include_rank_score
             self.include_regime_logits = include_regime_logits
             self.include_event_heads = bool(include_event_heads)
+            self.event_embeddings = EventFeatureScalarEmbeddings(event_feature_indices)
             self.distribution = distribution
             self.probabilistic_output = bool(probabilistic_output)
 
@@ -90,6 +92,7 @@ if nn is not None:
 
         def _encode(self, inputs: torch.Tensor) -> torch.Tensor:
             sequence = _coerce_sequence_input(inputs)
+            sequence = self.event_embeddings(sequence)
             length = sequence.size(1)
             if length > self.position_embedding.size(1):
                 raise ValueError(

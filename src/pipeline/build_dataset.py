@@ -22,6 +22,12 @@ from src.utils.paths import ensure_parent
 LOGGER = get_logger(__name__)
 
 
+def _assert_feature_target_separation(feature_columns: list[str]) -> None:
+    overlap = sorted(set(feature_columns).intersection(TARGET_COLUMNS))
+    if overlap:
+        raise ValueError(f"Leakage risk: target columns present in feature matrix: {overlap}")
+
+
 @dataclass(slots=True)
 class BuildDatasetArtifacts:
     datasets: dict[str, WindowDatasetArtifacts | PanelDatasetArtifacts]
@@ -396,6 +402,7 @@ def build_dataset(
             "(for example: set data.max_tickers higher or null, lower data.min_sequence_length, and lower "
             "dataset.window_size)."
         )
+    _assert_feature_target_separation(feature_artifacts.feature_columns)
 
     target_horizon = _resolve_label_horizon(config)
     event_target_cfg = getattr(config, "event_target", None)
@@ -419,6 +426,10 @@ def build_dataset(
         regression_clip=float(getattr(config.targets, "regression_clip", 3.0)),
         event_k=event_k,
         event_vol_window=event_vol_window,
+        event_vol_multiplier=float(getattr(config.targets, "event_vol_multiplier", 1.25)),
+        post_event_horizons=tuple(getattr(config.targets, "post_event_horizons", (1, 3, 6, 12))),
+        event_reversal_horizon=int(getattr(config.targets, "event_reversal_horizon", 6)),
+        event_absorption_horizon=int(getattr(config.targets, "event_absorption_horizon", 6)),
     )
 
     split_mode = config.dataset.split_mode.lower().strip()

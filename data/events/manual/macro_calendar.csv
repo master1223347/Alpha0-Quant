@@ -1,0 +1,2 @@
+event_time_utc,ticker,event_type,event_scope,event_subtype,title,importance_score,scheduled,asof_timestamp_utc
+2024-01-02T14:00:00,,macro,macro,FOMC,Synthetic FOMC minutes,0.7,true,2024-01-02T14:00:00

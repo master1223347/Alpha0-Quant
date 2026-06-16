@@ -1,0 +1,102 @@
+"""Shared event feature/target registries used across audits and runtime checks."""
+
+from __future__ import annotations
+
+
+EVENT_ID_COLUMNS = (
+    "event_type_id",
+    "event_scope_id",
+    "event_scheduled_id",
+    "time_to_event_bucket",
+    "time_since_event_bucket",
+)
+
+
+EVENT_CONTEXT_COLUMNS = (
+    "is_event_window",
+    "is_pre_event",
+    "is_post_event",
+    "is_event_bar",
+    "macro_event_active",
+    "earnings_event_active",
+    "sec_filing_event_active",
+    "news_event_active",
+    "geopolitical_event_active",
+    "liquidity_event_active",
+    "scheduled_event_active",
+    "unscheduled_event_active",
+    "event_type_id",
+    "event_scope_id",
+    "event_scheduled_id",
+    "time_to_event_bucket",
+    "time_since_event_bucket",
+    "minutes_to_next_event",
+    "minutes_since_last_event",
+)
+
+
+EVENT_FEATURE_COLUMNS = (
+    "is_event_window",
+    "is_pre_event",
+    "is_post_event",
+    "is_event_bar",
+    "minutes_to_next_event",
+    "minutes_since_last_event",
+    "event_count_last_30m",
+    "event_count_last_1h",
+    "event_count_last_1d",
+    "max_event_importance_last_1h",
+    "mean_event_sentiment_last_1h",
+    "sum_abs_event_sentiment_last_1h",
+    "macro_event_active",
+    "earnings_event_active",
+    "sec_filing_event_active",
+    "news_event_active",
+    "geopolitical_event_active",
+    "liquidity_event_active",
+    "scheduled_event_active",
+    "unscheduled_event_active",
+    "ticker_event_count_last_1h",
+    "ticker_news_sentiment_last_1h",
+    "ticker_sec_filing_active",
+    "ticker_earnings_active",
+    "market_event_count_last_1h",
+    "macro_surprise_score",
+    "geopolitical_tone_score",
+    "event_sentiment_decay_30m",
+    "event_sentiment_decay_2h",
+    "event_importance_decay_30m",
+    "event_importance_decay_2h",
+    "event_type_id",
+    "event_scope_id",
+    "event_scheduled_id",
+    "time_to_event_bucket",
+    "time_since_event_bucket",
+    "news_sentiment_score",
+    "news_sentiment_confidence",
+    "news_negative_score",
+    "news_neutral_score",
+    "news_positive_score",
+    "news_novelty_score",
+    "news_cluster_size",
+    "news_volume_spike",
+    "news_tone_change_1h",
+    "news_tone_change_1d",
+)
+
+
+EVENT_TARGET_COLUMNS = (
+    "event_threshold",
+    "event_label",
+    "event_direction_label",
+    "event_signed_label",
+    "event_magnitude",
+    "event_opportunity_label",
+    "event_adjusted_vol_direction_label",
+    "post_event_drift_label_h1",
+    "post_event_drift_label_h3",
+    "post_event_drift_label_h6",
+    "post_event_drift_label_h12",
+    "event_reversal_label",
+    "event_absorption_label",
+)

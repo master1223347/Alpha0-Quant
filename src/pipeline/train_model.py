@@ -48,6 +48,10 @@ def _requires_multitask_objective(config: ExperimentConfig) -> bool:
         float(getattr(config.training, "calibration_aux_weight", 0.0)),
         float(getattr(config.training, "event_loss_weight", 0.0)),
         float(getattr(config.training, "event_direction_loss_weight", 0.0)),
+        float(getattr(config.training, "event_opportunity_loss_weight", 0.0)),
+        float(getattr(config.training, "event_drift_loss_weight", 0.0)),
+        float(getattr(config.training, "event_reversal_loss_weight", 0.0)),
+        float(getattr(config.training, "event_absorption_loss_weight", 0.0)),
     )
     return any(weight > 0.0 for weight in weighted_terms) or bool(getattr(config.event_target, "enabled", False))
 
@@ -144,12 +148,27 @@ def _export_trained_model(config: ExperimentConfig, *, model: Any, train_dataset
     return None
 
 
-def build_model(config: ExperimentConfig, *, num_features: int, window_size: int) -> Any:
+EVENT_EMBEDDING_COLUMNS = (
+    "event_type_id",
+    "event_scope_id",
+    "event_scheduled_id",
+    "time_to_event_bucket",
+    "time_since_event_bucket",
+)
+
+
+def _event_feature_indices(feature_columns: list[str] | None) -> dict[str, int]:
+    if not feature_columns:
+        return {}
+    return {column: feature_columns.index(column) for column in EVENT_EMBEDDING_COLUMNS if column in feature_columns}
+
+
+def build_model(config: ExperimentConfig, *, num_features: int, window_size: int, feature_columns: list[str] | None = None) -> Any:
     """Public alias for the internal model factory."""
-    return _build_model(config, num_features=num_features, window_size=window_size)
+    return _build_model(config, num_features=num_features, window_size=window_size, feature_columns=feature_columns)
 
 
-def _build_model(config: ExperimentConfig, *, num_features: int, window_size: int) -> Any:
+def _build_model(config: ExperimentConfig, *, num_features: int, window_size: int, feature_columns: list[str] | None = None) -> Any:
     model_name = config.model.model_name.lower()
     minn_enabled = bool(getattr(config.model, "minn_enabled", False))
     multitask_output = bool(getattr(config.model, "multitask_output", minn_enabled))
@@ -176,7 +195,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int, window_size: in
         multitask_output = True
     include_rank_head = bool(getattr(config.model, "include_rank_head", False))
     include_regime_head = bool(getattr(config.model, "include_regime_head", False))
-    include_event_heads = bool(getattr(config.model, "include_event_heads", False)) or bool(
+    include_event_heads = bool(getattr(config.model, "include_event_heads", False)) or bool(getattr(config.model, "event_heads", False)) or bool(
         getattr(config.event_target, "enabled", False)
     )
     if float(getattr(config.training, "rank_loss_weight", 0.0)) > 0.0:
@@ -186,10 +205,18 @@ def _build_model(config: ExperimentConfig, *, num_features: int, window_size: in
     if (
         float(getattr(config.training, "event_loss_weight", 0.0)) > 0.0
         or float(getattr(config.training, "event_direction_loss_weight", 0.0)) > 0.0
+        or float(getattr(config.training, "event_opportunity_loss_weight", 0.0)) > 0.0
+        or float(getattr(config.training, "event_drift_loss_weight", 0.0)) > 0.0
+        or float(getattr(config.training, "event_reversal_loss_weight", 0.0)) > 0.0
+        or float(getattr(config.training, "event_absorption_loss_weight", 0.0)) > 0.0
     ):
         include_event_heads = True
     regime_classes = int(getattr(config.model, "regime_classes", 3))
     distribution = str(getattr(config.model, "distribution", "gaussian"))
+    event_feature_indices = _event_feature_indices(feature_columns) if (
+        bool(getattr(config.model, "use_event_type_embedding", True))
+        or bool(getattr(config.model, "use_event_scope_embedding", True))
+    ) else {}
     if model_name in {"baseline", "baseline_mlp", "mlp", "encoder", "encoder_mlp"}:
         return BaselineMLP(
             window_size=window_size,
@@ -201,6 +228,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int, window_size: in
             include_rank_score=include_rank_head,
             include_regime_logits=include_regime_head,
             include_event_heads=include_event_heads,
+            event_feature_indices=event_feature_indices,
             regime_classes=regime_classes,
             distribution=distribution,
         )
@@ -213,6 +241,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int, window_size: in
             include_rank_score=include_rank_head,
             include_regime_logits=include_regime_head,
             include_event_heads=include_event_heads,
+            event_feature_indices=event_feature_indices,
             regime_classes=regime_classes,
             distribution=distribution,
             probabilistic_output=probabilistic_output,
@@ -226,6 +255,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int, window_size: in
             include_rank_score=include_rank_head,
             include_regime_logits=include_regime_head,
             include_event_heads=include_event_heads,
+            event_feature_indices=event_feature_indices,
             regime_classes=regime_classes,
             distribution=distribution,
             probabilistic_output=probabilistic_output,
@@ -239,6 +269,7 @@ def _build_model(config: ExperimentConfig, *, num_features: int, window_size: in
             include_rank_score=include_rank_head,
             include_regime_logits=include_regime_head,
             include_event_heads=include_event_heads,
+            event_feature_indices=event_feature_indices,
             regime_classes=regime_classes,
             distribution=distribution,
             probabilistic_output=probabilistic_output,
@@ -273,6 +304,7 @@ def run_training_pipeline(
         config,
         num_features=len(dataset_artifacts.feature_columns),
         window_size=model_window_size,
+        feature_columns=dataset_artifacts.feature_columns,
     )
     training_artifacts = train_model(config, dataloaders, model)
     _export_trained_model(config, model=model, train_dataset=train_dataset)

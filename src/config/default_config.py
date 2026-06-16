@@ -50,6 +50,11 @@ class TargetConfig:
     return_target: str = "vol_target_clipped"
     threshold_target: str = "vol_direction_label"
     direction_target: str = "label"
+    use_event_targets: bool = False
+    event_vol_multiplier: float = 1.25
+    post_event_horizons: tuple[int, ...] = (1, 3, 6, 12)
+    event_reversal_horizon: int = 6
+    event_absorption_horizon: int = 6
 
 
 @dataclass(slots=True)
@@ -119,6 +124,92 @@ class CalendarConfig:
 
 
 @dataclass(slots=True)
+class EventsConfig:
+    enabled: bool = False
+    cache_dir: str = "data/events/cache"
+    output_path: str = "data/events/events.parquet"
+    timezone: str = "UTC"
+    manual_events_path: str = "data/events/manual/events.csv"
+    manual_earnings_path: str = "data/events/manual/earnings.csv"
+    manual_news_path: str = "data/events/manual/news.csv"
+    manual_macro_calendar_path: str = "data/events/manual/macro_calendar.csv"
+    run_event_study: bool = False
+    run_alpha_decay: bool = False
+    run_leakage_report: bool = True
+
+
+@dataclass(slots=True)
+class FredSourceConfig:
+    enabled: bool = False
+    api_key_env: str = "FRED_API_KEY"
+    series: tuple[str, ...] = ("CPIAUCSL", "UNRATE", "PAYEMS", "FEDFUNDS", "DGS10", "VIXCLS")
+
+
+@dataclass(slots=True)
+class SecSourceConfig:
+    enabled: bool = False
+    user_agent_env: str = "SEC_USER_AGENT"
+    forms: tuple[str, ...] = ("8-K", "10-Q", "10-K", "S-1", "DEF 14A", "13D", "4")
+
+
+@dataclass(slots=True)
+class NewsSourceConfig:
+    enabled: bool = False
+    provider: str = "local_csv"
+    api_key_env: str = "NEWS_API_KEY"
+    use_finbert: bool = False
+    max_articles_per_ticker_per_day: int = 50
+
+
+@dataclass(slots=True)
+class GdeltSourceConfig:
+    enabled: bool = False
+    themes: tuple[str, ...] = (
+        "conflict",
+        "sanctions",
+        "oil",
+        "energy",
+        "inflation",
+        "recession",
+        "central_bank",
+        "election",
+        "trade",
+    )
+
+
+@dataclass(slots=True)
+class EarningsSourceConfig:
+    enabled: bool = False
+    provider: str = "local_csv"
+    api_key_env: str = "EARNINGS_API_KEY"
+
+
+@dataclass(slots=True)
+class EventSourcesConfig:
+    fred: FredSourceConfig = field(default_factory=FredSourceConfig)
+    sec: SecSourceConfig = field(default_factory=SecSourceConfig)
+    news: NewsSourceConfig = field(default_factory=NewsSourceConfig)
+    gdelt: GdeltSourceConfig = field(default_factory=GdeltSourceConfig)
+    earnings: EarningsSourceConfig = field(default_factory=EarningsSourceConfig)
+
+
+@dataclass(slots=True)
+class EventAlignmentConfig:
+    pre_windows_minutes: tuple[int, ...] = (15, 30, 60)
+    post_windows_minutes: tuple[int, ...] = (5, 15, 30, 60, 390)
+    sentiment_decay_halflives_minutes: tuple[int, ...] = (30, 120)
+    attach_macro_to_all_tickers: bool = True
+
+
+@dataclass(slots=True)
+class EventLeakageConfig:
+    enforce_asof: bool = True
+    drop_events_without_asof: bool = False
+    allow_scheduled_event_time_pre_release: bool = True
+    block_actual_values_pre_release: bool = True
+
+
+@dataclass(slots=True)
 class EventTargetConfig:
     """Two-head event-meta target.
 
@@ -171,6 +262,10 @@ class ModelConfig:
     include_rank_head: bool = False
     include_regime_head: bool = False
     include_event_heads: bool = False
+    event_heads: bool = False
+    event_embedding_dim: int = 16
+    use_event_type_embedding: bool = True
+    use_event_scope_embedding: bool = True
     regime_classes: int = 3
     distribution: str = "gaussian"
 
@@ -208,6 +303,10 @@ class TrainingConfig:
     calibration_aux_weight: float = 0.0
     event_loss_weight: float = 0.0
     event_direction_loss_weight: float = 0.0
+    event_opportunity_loss_weight: float = 0.0
+    event_drift_loss_weight: float = 0.0
+    event_reversal_loss_weight: float = 0.0
+    event_absorption_loss_weight: float = 0.0
     event_focal_gamma: float = 2.0
     event_sample_weight_cap: float = 2.0
     min_auc_sample_count: int = 200
@@ -268,6 +367,15 @@ class BacktestConfig:
     mean_reverting_policy: str = "flip"
     volatile_policy: str = "flat"
     volatile_confidence_threshold: float = 0.70
+    event_mode: str = "ignore"
+    avoid_event_types: tuple[str, ...] = ()
+    only_event_types: tuple[str, ...] = ()
+    pre_event_flatten_minutes: int = 15
+    post_event_cooldown_minutes: int = 15
+    event_confidence_boost: float = 0.10
+    block_liquidity_events: bool = True
+    allow_post_event_drift_trades: bool = True
+    event_adaptive_thresholds: bool = True
 
 
 @dataclass(slots=True)
@@ -323,6 +431,10 @@ class ExperimentConfig:
     features: FeatureConfig = field(default_factory=FeatureConfig)
     market_context: MarketContextConfig = field(default_factory=MarketContextConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
+    events: EventsConfig = field(default_factory=EventsConfig)
+    event_sources: EventSourcesConfig = field(default_factory=EventSourcesConfig)
+    event_alignment: EventAlignmentConfig = field(default_factory=EventAlignmentConfig)
+    event_leakage: EventLeakageConfig = field(default_factory=EventLeakageConfig)
     event_target: EventTargetConfig = field(default_factory=EventTargetConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     model: ModelConfig = field(default_factory=ModelConfig)

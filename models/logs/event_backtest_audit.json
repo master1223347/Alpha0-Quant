@@ -1,0 +1,10 @@
+{
+  "ignore_matches_legacy": {
+    "pnl": true,
+    "trade_count": true
+  },
+  "avoid_events_blocks_trades": true,
+  "only_events_blocks_non_event_bars": true,
+  "adaptive_blocks_pre_event_or_liquidity": true,
+  "adaptive_uses_realized_future_performance": false
+}

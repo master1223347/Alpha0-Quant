@@ -19,6 +19,8 @@ from src.evaluation.uncertainty import estimate_mc_dropout_uncertainty
 from src.models.losses import compute_pos_weight
 from src.models.losses_prob import build_model_loss
 from src.evaluation.stat_tests import benjamini_hochberg, deflated_sharpe_ratio, hansen_spa_test, white_reality_check
+from src.events.alpha_decay import build_alpha_decay_report, write_alpha_decay_report
+from src.events.event_study import build_event_study_report, write_event_study_report
 from src.training.checkpoint import load_checkpoint
 from src.training.validate import validate_epoch
 from src.utils.logger import get_logger
@@ -74,6 +76,21 @@ def _build_execution_model_kwargs(config: ExperimentConfig) -> dict[str, Any]:
     }
 
 
+def _build_event_backtest_kwargs(config: ExperimentConfig, validation: Any | None = None) -> dict[str, Any]:
+    return {
+        "event_context": getattr(validation, "event_context", None) if validation is not None else None,
+        "event_mode": str(getattr(config.backtest, "event_mode", "ignore")),
+        "avoid_event_types": tuple(getattr(config.backtest, "avoid_event_types", ())),
+        "only_event_types": tuple(getattr(config.backtest, "only_event_types", ())),
+        "pre_event_flatten_minutes": int(getattr(config.backtest, "pre_event_flatten_minutes", 15)),
+        "post_event_cooldown_minutes": int(getattr(config.backtest, "post_event_cooldown_minutes", 15)),
+        "event_confidence_boost": float(getattr(config.backtest, "event_confidence_boost", 0.10)),
+        "block_liquidity_events": bool(getattr(config.backtest, "block_liquidity_events", True)),
+        "allow_post_event_drift_trades": bool(getattr(config.backtest, "allow_post_event_drift_trades", True)),
+        "event_adaptive_thresholds": bool(getattr(config.backtest, "event_adaptive_thresholds", True)),
+    }
+
+
 def _safe_probability(up_probability: float, down_probability: float) -> float:
     denominator = float(up_probability + down_probability)
     if denominator <= 1e-8:
@@ -103,6 +120,7 @@ def _build_confidence_bucket_summary(
     regime_backtest_kwargs: dict[str, Any] | None = None,
     regime_fit_kwargs: dict[str, Any] | None = None,
     execution_model_kwargs: dict[str, Any] | None = None,
+    event_backtest_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from src.evaluation.metrics import compute_classification_metrics
 
@@ -176,6 +194,7 @@ def _build_confidence_bucket_summary(
         **(regime_fit_kwargs or {}),
         **(regime_backtest_kwargs or {}),
         **(execution_model_kwargs or {}),
+        **(event_backtest_kwargs or {}),
     )
 
     average_realized_return = (
@@ -605,6 +624,10 @@ def run_evaluation_pipeline(
         calibration_aux_weight=float(getattr(config.training, "calibration_aux_weight", 0.0)),
         event_weight=float(getattr(config.training, "event_loss_weight", 0.0)),
         event_direction_weight=float(getattr(config.training, "event_direction_loss_weight", 0.0)),
+        event_opportunity_weight=float(getattr(config.training, "event_opportunity_loss_weight", 0.0)),
+        event_drift_weight=float(getattr(config.training, "event_drift_loss_weight", 0.0)),
+        event_reversal_weight=float(getattr(config.training, "event_reversal_loss_weight", 0.0)),
+        event_absorption_weight=float(getattr(config.training, "event_absorption_loss_weight", 0.0)),
         event_focal_gamma=float(getattr(config.training, "event_focal_gamma", 2.0)),
         event_sample_weight_cap=float(getattr(config.training, "event_sample_weight_cap", 2.0)),
     ).to(device)
@@ -617,6 +640,7 @@ def run_evaluation_pipeline(
     regime_backtest_kwargs = _build_regime_backtest_kwargs(config)
     regime_fit_kwargs = _extract_regime_fit_kwargs(fit_loader)
     execution_model_kwargs = _build_execution_model_kwargs(config)
+    event_backtest_kwargs = _build_event_backtest_kwargs(config, validation)
     selection_mode = str(getattr(config.backtest, "selection_mode", "global_abs")).lower().strip()
     score_source = str(getattr(config.backtest, "score_source", "expected_utility")).lower().strip()
     long_short_percentile = getattr(config.backtest, "long_short_percentile", None)
@@ -653,6 +677,7 @@ def run_evaluation_pipeline(
         **regime_fit_kwargs,
         **regime_backtest_kwargs,
         **execution_model_kwargs,
+        **event_backtest_kwargs,
     )
 
     report = build_evaluation_report(
@@ -717,6 +742,7 @@ def run_evaluation_pipeline(
             regime_backtest_kwargs=regime_backtest_kwargs,
             regime_fit_kwargs=regime_fit_kwargs,
             execution_model_kwargs=execution_model_kwargs,
+            event_backtest_kwargs=event_backtest_kwargs,
         )
         for top_percentile in confidence_bucket_sweep
     ]
@@ -797,9 +823,39 @@ def run_evaluation_pipeline(
             **regime_fit_kwargs,
             **regime_backtest_kwargs,
             **execution_model_kwargs,
+            **event_backtest_kwargs,
         ).to_dict()
         for threshold in confidence_threshold_sweep
     }
+
+    if bool(getattr(getattr(config, "events", None), "enabled", False)):
+        report.metrics["event_intelligence"] = {
+            "event_vs_non_event_sharpe": {
+                "event": float(backtest.event_sharpe),
+                "non_event": float(backtest.non_event_sharpe),
+            },
+            "event_vs_non_event_hit_rate": {
+                "event": float(backtest.event_hit_rate),
+                "non_event": float(backtest.non_event_hit_rate),
+            },
+            "trades_blocked_by_event_rules": int(backtest.trades_blocked_by_event_rules),
+            "trades_added_by_event_rules": int(backtest.trades_added_by_event_rules),
+            "turnover_change": float(backtest.turnover_change),
+        }
+        report_dir = Path(config.training.metrics_path).parent
+        event_study = build_event_study_report(validation, backtest)
+        alpha_decay = build_alpha_decay_report(validation)
+        write_event_study_report(report_dir / "event_study_report.json", event_study)
+        write_alpha_decay_report(report_dir / "event_alpha_decay_report.json", alpha_decay)
+        report.metrics["event_study"] = {
+            "event_sample_count": int(event_study.get("event_sample_count", 0)),
+            "placebo": event_study.get("placebo", {}),
+        }
+        report.metrics["alpha_decay"] = {
+            "normal_signal_half_life": alpha_decay.get("normal_bars", {}).get("alpha_half_life"),
+            "event_signal_half_life": alpha_decay.get("event_bars", {}).get("alpha_half_life"),
+            "event_signals_decay_faster": alpha_decay.get("event_signals_decay_faster"),
+        }
 
     if bool(getattr(config.evaluation, "run_selection_bias_tests", False)):
         strategy_curves: list[list[float]] = []

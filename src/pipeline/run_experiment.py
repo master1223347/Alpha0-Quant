@@ -121,6 +121,13 @@ def run_experiment(
         "config": config_to_dict(config),
         "training": train_artifacts.training.to_dict(),
         "evaluation_report_path": eval_artifacts.report_path,
+        "backtest_path": str(Path(config.training.metrics_path).with_name("backtest.json")),
+        "event_study_report_path": str(Path(config.training.metrics_path).with_name("event_study_report.json"))
+        if bool(getattr(config.events, "enabled", False))
+        else None,
+        "event_alpha_decay_report_path": str(Path(config.training.metrics_path).with_name("event_alpha_decay_report.json"))
+        if bool(getattr(config.events, "enabled", False))
+        else None,
         "walk_forward_retrain": walk_forward_retrain_result,
     }
 
@@ -129,7 +136,79 @@ def run_experiment(
     with result_path.open("w", encoding="utf-8") as handle:
         json.dump(result, handle, indent=2)
     LOGGER.info("Experiment result written to %s", result_path)
+    _write_results_summary(config, eval_artifacts.report.to_dict(), result)
     return result
+
+
+def _fmt(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    return str(value)
+
+
+def _write_results_summary(config: Any, report: dict[str, Any], result: dict[str, Any]) -> None:
+    metrics = report.get("metrics", {})
+    backtest = report.get("backtest", {})
+    lines = [
+        "# Alpha0 Quant Results",
+        "",
+        "## Baseline Prediction",
+        f"non_neutral_directional_hit_rate: {_fmt(metrics.get('accuracy', 'n/a'))}",
+        f"auc: {_fmt(metrics.get('auc', 'n/a'))}",
+        f"confidence_buckets: {len(metrics.get('confidence_buckets', []) or [])}",
+        "",
+        "## Opportunity / Trade Quality",
+        f"sharpe_after_costs: {_fmt(backtest.get('sharpe', 'n/a'))}",
+        f"hit_rate_after_costs: {_fmt(backtest.get('hit_rate', 'n/a'))}",
+        f"average_trade_return: {_fmt(backtest.get('pnl', 0.0) / max(1, int(backtest.get('trade_count', 0) or 0)))}",
+        f"trade_count: {_fmt(backtest.get('trade_count', 'n/a'))}",
+        f"turnover_change: {_fmt(backtest.get('turnover_change', 0.0))}",
+    ]
+    event_metrics = metrics.get("event_intelligence", {})
+    if event_metrics or bool(getattr(config.events, "enabled", False)):
+        lines.extend(
+            [
+                "",
+                "## Event Intelligence",
+                f"event_sharpe: {_fmt(backtest.get('event_sharpe', 0.0))}",
+                f"non_event_sharpe: {_fmt(backtest.get('non_event_sharpe', 0.0))}",
+                f"event_hit_rate: {_fmt(backtest.get('event_hit_rate', 0.0))}",
+                f"non_event_hit_rate: {_fmt(backtest.get('non_event_hit_rate', 0.0))}",
+                f"trades_blocked_by_event_rules: {_fmt(backtest.get('trades_blocked_by_event_rules', 0))}",
+                f"trades_added_by_event_rules: {_fmt(backtest.get('trades_added_by_event_rules', 0))}",
+                "",
+                "## Event Study",
+                f"event_sample_count: {_fmt((metrics.get('event_study') or {}).get('event_sample_count', 0))}",
+                f"placebo: {(metrics.get('event_study') or {}).get('placebo', {})}",
+                "",
+                "## News/Sentiment",
+                "sentiment_coverage: see event_study_report.json",
+                "sentiment_performance_correlation: not estimated in v1",
+                "novelty_performance_correlation: not estimated in v1",
+                "",
+                "## SEC/Earnings/Macro",
+                "window_performance: see event_study_report.json grouped event_type IDs",
+                "",
+                "## Alpha Decay",
+                f"normal_signal_half_life: {_fmt((metrics.get('alpha_decay') or {}).get('normal_signal_half_life', 'n/a'))}",
+                f"event_signal_half_life: {_fmt((metrics.get('alpha_decay') or {}).get('event_signal_half_life', 'n/a'))}",
+                "",
+                "## Leakage Warnings",
+                "event_leakage_report: data/events/event_leakage_report.json",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Artifacts",
+            f"evaluation_report: {result.get('evaluation_report_path')}",
+            f"backtest: {result.get('backtest_path')}",
+            f"event_study: {result.get('event_study_report_path')}",
+            f"event_alpha_decay: {result.get('event_alpha_decay_report_path')}",
+        ]
+    )
+    with Path("results.txt").open("w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
 
 
 def _parse_args() -> argparse.Namespace:

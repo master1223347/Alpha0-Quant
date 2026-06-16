@@ -1,0 +1,3 @@
+event_time_utc,ticker,event_scope,event_type,event_subtype,title,importance_score,sentiment_score,sentiment_label,surprise_score,scheduled,asof_timestamp_utc
+2024-01-03T10:00:00,,macro,macro,CPI,Synthetic CPI release,0.9,-0.2,negative,0.4,true,2024-01-03T10:00:00
+2024-01-04T11:00:00,AAA,ticker,sec_filing,8-K,AAA synthetic 8-K,0.7,-0.1,negative,,false,2024-01-04T11:00:00

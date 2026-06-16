@@ -1,0 +1,2 @@
+event_time_utc,ticker,event_type,event_subtype,title,importance_score,sentiment_score,sentiment_label,surprise_score,scheduled,asof_timestamp_utc,metadata_json
+2024-01-03T15:00:00,BBB,earnings,earnings,BBB synthetic earnings,0.8,0.3,positive,0.2,true,2024-01-03T15:00:00,"{""eps_actual"": 1.2, ""eps_estimate"": 1.0}"

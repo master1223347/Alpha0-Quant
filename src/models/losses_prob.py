@@ -17,9 +17,17 @@ except ModuleNotFoundError:
 
 from src.models.losses_event import (
     event_focal_loss,
+    extract_event_absorption_logit,
+    extract_event_absorption_target,
+    extract_event_drift_logits,
+    extract_event_drift_target,
     extract_event_direction_logit,
     extract_event_direction_target,
     extract_event_logit,
+    extract_event_opportunity_logit,
+    extract_event_opportunity_target,
+    extract_event_reversal_logit,
+    extract_event_reversal_target,
     extract_event_sample_weight,
     extract_event_target,
     masked_direction_loss,
@@ -364,6 +372,10 @@ if nn is not None:
             calibration_aux_weight: float = 0.0,
             event_weight: float = 0.0,
             event_direction_weight: float = 0.0,
+            event_opportunity_weight: float = 0.0,
+            event_drift_weight: float = 0.0,
+            event_reversal_weight: float = 0.0,
+            event_absorption_weight: float = 0.0,
             event_focal_gamma: float = 2.0,
             event_sample_weight_cap: float = 2.0,
         ) -> None:
@@ -390,6 +402,10 @@ if nn is not None:
             self.calibration_aux_weight = float(calibration_aux_weight)
             self.event_weight = float(event_weight)
             self.event_direction_weight = float(event_direction_weight)
+            self.event_opportunity_weight = float(event_opportunity_weight)
+            self.event_drift_weight = float(event_drift_weight)
+            self.event_reversal_weight = float(event_reversal_weight)
+            self.event_absorption_weight = float(event_absorption_weight)
             self.event_focal_gamma = float(event_focal_gamma)
             self.event_sample_weight_cap = float(event_sample_weight_cap)
             self.requires_dict_outputs = any(
@@ -407,6 +423,10 @@ if nn is not None:
                     self.calibration_aux_weight,
                     self.event_weight,
                     self.event_direction_weight,
+                    self.event_opportunity_weight,
+                    self.event_drift_weight,
+                    self.event_reversal_weight,
+                    self.event_absorption_weight,
                 )
             )
             self.requires_probabilistic_outputs = any(
@@ -517,6 +537,57 @@ if nn is not None:
                 )
                 total = total + self.event_direction_weight * event_direction_loss
                 components["event_direction_loss"] = float(event_direction_loss.detach().cpu().item())
+
+            event_opportunity_logit = extract_event_opportunity_logit(outputs)
+            event_opportunity_target = extract_event_opportunity_target(batch, device=device)
+            if event_opportunity_logit is None and self.event_opportunity_weight > 0:
+                raise ValueError("event_opportunity_loss_weight > 0 but outputs are missing event_opportunity_logit")
+            if event_opportunity_logit is not None and event_opportunity_target is not None:
+                opportunity_loss = event_focal_loss(
+                    event_opportunity_logit,
+                    event_opportunity_target,
+                    gamma=self.event_focal_gamma,
+                    sample_weight=event_sample_weight,
+                )
+                total = total + self.event_opportunity_weight * opportunity_loss
+                components["event_opportunity_loss"] = float(opportunity_loss.detach().cpu().item())
+
+            event_drift_logits = extract_event_drift_logits(outputs)
+            event_drift_target = extract_event_drift_target(batch, device=device)
+            if event_drift_logits is None and self.event_drift_weight > 0:
+                raise ValueError("event_drift_loss_weight > 0 but outputs are missing event_drift_logits")
+            if event_drift_logits is not None and event_drift_target is not None:
+                drift_loss = self.ce(event_drift_logits, event_drift_target)
+                total = total + self.event_drift_weight * drift_loss
+                components["event_drift_loss"] = float(drift_loss.detach().cpu().item())
+
+            event_reversal_logit = extract_event_reversal_logit(outputs)
+            event_reversal_target = extract_event_reversal_target(batch, device=device)
+            if event_reversal_logit is None and self.event_reversal_weight > 0:
+                raise ValueError("event_reversal_loss_weight > 0 but outputs are missing event_reversal_logit")
+            if event_reversal_logit is not None and event_reversal_target is not None:
+                reversal_loss = event_focal_loss(
+                    event_reversal_logit,
+                    event_reversal_target,
+                    gamma=self.event_focal_gamma,
+                    sample_weight=event_sample_weight,
+                )
+                total = total + self.event_reversal_weight * reversal_loss
+                components["event_reversal_loss"] = float(reversal_loss.detach().cpu().item())
+
+            event_absorption_logit = extract_event_absorption_logit(outputs)
+            event_absorption_target = extract_event_absorption_target(batch, device=device)
+            if event_absorption_logit is None and self.event_absorption_weight > 0:
+                raise ValueError("event_absorption_loss_weight > 0 but outputs are missing event_absorption_logit")
+            if event_absorption_logit is not None and event_absorption_target is not None:
+                absorption_loss = event_focal_loss(
+                    event_absorption_logit,
+                    event_absorption_target,
+                    gamma=self.event_focal_gamma,
+                    sample_weight=event_sample_weight,
+                )
+                total = total + self.event_absorption_weight * absorption_loss
+                components["event_absorption_loss"] = float(absorption_loss.detach().cpu().item())
 
             mean_return = extract_mean_return(outputs)
             log_scale = extract_log_scale(outputs)
@@ -671,6 +742,10 @@ def build_model_loss(
     calibration_aux_weight: float = 0.0,
     event_weight: float = 0.0,
     event_direction_weight: float = 0.0,
+    event_opportunity_weight: float = 0.0,
+    event_drift_weight: float = 0.0,
+    event_reversal_weight: float = 0.0,
+    event_absorption_weight: float = 0.0,
     event_focal_gamma: float = 2.0,
     event_sample_weight_cap: float = 2.0,
 ) -> Any:
@@ -693,6 +768,10 @@ def build_model_loss(
             float(calibration_aux_weight),
             float(event_weight),
             float(event_direction_weight),
+            float(event_opportunity_weight),
+            float(event_drift_weight),
+            float(event_reversal_weight),
+            float(event_absorption_weight),
         )
     )
     if requires_multitask and not multitask_output:
@@ -725,6 +804,10 @@ def build_model_loss(
             calibration_aux_weight=calibration_aux_weight,
             event_weight=event_weight,
             event_direction_weight=event_direction_weight,
+            event_opportunity_weight=event_opportunity_weight,
+            event_drift_weight=event_drift_weight,
+            event_reversal_weight=event_reversal_weight,
+            event_absorption_weight=event_absorption_weight,
             event_focal_gamma=event_focal_gamma,
             event_sample_weight_cap=event_sample_weight_cap,
         )

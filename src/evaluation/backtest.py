@@ -42,6 +42,18 @@ class BacktestReport:
     modeled_execution_cost_pnl: float = 0.0
     rejected_trade_count: int = 0
     avg_modeled_cost_bps: float = 0.0
+    event_mode: str = "ignore"
+    event_sharpe: float = 0.0
+    non_event_sharpe: float = 0.0
+    event_hit_rate: float = 0.0
+    non_event_hit_rate: float = 0.0
+    average_event_return: float = 0.0
+    average_non_event_return: float = 0.0
+    trades_blocked_by_event_rules: int = 0
+    trades_added_by_event_rules: int = 0
+    turnover_change: float = 0.0
+    event_max_drawdown: float = 0.0
+    non_event_max_drawdown: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -53,6 +65,15 @@ def _std(values: list[float]) -> float:
     mean_value = sum(values) / len(values)
     variance = sum((value - mean_value) ** 2 for value in values) / len(values)
     return variance**0.5
+
+
+def _coerce_event_series(values: list[float] | None, *, length: int, default: float = 0.0) -> list[float]:
+    if values is None:
+        return [float(default) for _ in range(length)]
+    output = [float(value) for value in values[:length]]
+    if len(output) < length:
+        output.extend(float(default) for _ in range(length - len(output)))
+    return output
 
 
 def _normalize_timestamp(value: Any) -> float | str | None:
@@ -174,6 +195,16 @@ def run_backtest(
     base_impact_bps: float = 25.0,
     order_notional_fraction: float = 0.01,
     reject_excess_pov: bool = False,
+    event_context: dict[str, list[float]] | None = None,
+    event_mode: str = "ignore",
+    avoid_event_types: tuple[str, ...] | list[str] = (),
+    only_event_types: tuple[str, ...] | list[str] = (),
+    pre_event_flatten_minutes: int = 15,
+    post_event_cooldown_minutes: int = 15,
+    event_confidence_boost: float = 0.10,
+    block_liquidity_events: bool = True,
+    allow_post_event_drift_trades: bool = True,
+    event_adaptive_thresholds: bool = True,
 ) -> BacktestReport:
     """Run a threshold-based long/short strategy."""
     if probabilities is None and (up_probabilities is None or down_probabilities is None):
@@ -202,6 +233,19 @@ def run_backtest(
         raise ValueError("long_short_percentile must be in (0, 0.5]")
 
     confidence_scores = [max(float(up), float(down)) for up, down in zip(up_probabilities, down_probabilities)]
+    event_context = event_context or {}
+    event_active_values = _coerce_event_series(event_context.get("is_event_window"), length=len(up_probabilities), default=0.0)
+    event_type_values = [int(value) for value in _coerce_event_series(event_context.get("event_type_id"), length=len(up_probabilities), default=0.0)]
+    liquidity_values = _coerce_event_series(event_context.get("liquidity_event_active"), length=len(up_probabilities), default=0.0)
+    pre_minutes_values = _coerce_event_series(event_context.get("minutes_to_next_event"), length=len(up_probabilities), default=1e6)
+    post_minutes_values = _coerce_event_series(event_context.get("minutes_since_last_event"), length=len(up_probabilities), default=1e6)
+    event_mode_value = str(event_mode or "ignore").strip().lower()
+    avoid_type_set = {str(value).strip().lower() for value in avoid_event_types}
+    only_type_set = {str(value).strip().lower() for value in only_event_types}
+
+    def _event_type_name(type_id: int) -> str:
+        names = {1: "macro", 2: "earnings", 3: "sec_filing", 4: "news", 5: "geopolitical", 6: "liquidity"}
+        return names.get(int(type_id), "")
     blended_scores = signal_scores
     source = str(signal_source).strip().lower()
     if blended_scores is None and source != "classification_prob":
@@ -354,6 +398,9 @@ def run_backtest(
     long_count = short_count = flat_count = 0
     nan_signal_count = score_nan_count
     trade_count = 0
+    raw_turnover_before_event_rules = 0.0
+    trades_blocked_by_event_rules = 0
+    trades_added_by_event_rules = 0
     previous_position = 0
     cost_fraction = (float(cost_bps_per_trade) + float(slippage_bps)) / 10000.0
     transaction_cost_pnl = 0.0
@@ -395,6 +442,34 @@ def run_backtest(
                 directional_sign = 1 if up_probability >= down_probability else -1
                 if raw_position != 0 and (1 if raw_position > 0 else -1) != directional_sign:
                     raw_position = 0
+        event_active = index < len(event_active_values) and event_active_values[index] > 0
+        event_type_name = _event_type_name(event_type_values[index] if index < len(event_type_values) else 0)
+        before_event_rules = raw_position
+        if raw_position != 0:
+            raw_turnover_before_event_rules += abs(raw_position)
+        if event_mode_value in {"avoid_events", "only_events", "adaptive"}:
+            in_flatten_window = index < len(pre_minutes_values) and pre_minutes_values[index] <= float(pre_event_flatten_minutes)
+            in_cooldown_window = index < len(post_minutes_values) and post_minutes_values[index] <= float(post_event_cooldown_minutes)
+            type_avoided = bool(avoid_type_set) and event_type_name in avoid_type_set
+            type_required_missing = bool(only_type_set) and event_type_name not in only_type_set
+            if event_mode_value == "avoid_events" and (event_active or in_flatten_window or in_cooldown_window or type_avoided):
+                raw_position = 0
+            elif event_mode_value == "only_events" and (not event_active or type_required_missing):
+                raw_position = 0
+            elif event_mode_value == "adaptive":
+                if bool(block_liquidity_events) and index < len(liquidity_values) and liquidity_values[index] > 0:
+                    raw_position = 0
+                elif in_flatten_window or type_avoided:
+                    raw_position = 0
+                elif event_active and bool(event_adaptive_thresholds):
+                    required_confidence = min(0.99, float(confidence_threshold or 0.0) + float(event_confidence_boost))
+                    if confidence_scores[index] < required_confidence:
+                        raw_position = 0
+                if before_event_rules == 0 and raw_position != 0 and bool(allow_post_event_drift_trades):
+                    trades_added_by_event_rules += 1
+        if before_event_rules != 0 and raw_position == 0:
+            trades_blocked_by_event_rules += 1
+
         if regime_enabled:
             raw_position = adapt_position_to_regime(
                 raw_position=raw_position,
@@ -517,6 +592,29 @@ def run_backtest(
             winning_trades += 1
     hit_rate = (winning_trades / len(active_indices)) if active_indices else 0.0
 
+    def _subset_stats(indices: list[int]) -> tuple[float, float, float, float]:
+        values = [net_returns[index] for index in indices if 0 <= index < len(net_returns)]
+        if not values:
+            return 0.0, 0.0, 0.0, 0.0
+        std = _std(values)
+        sharpe_value = ((sum(values) / len(values)) / std * math.sqrt(periods_per_year)) if std > 0 else 0.0
+        hits = sum(1 for value in values if value > 0.0) / len(values)
+        equity_value = 1.0
+        peak_value = 1.0
+        drawdown = 0.0
+        for value in values:
+            equity_value *= 1.0 + value
+            peak_value = max(peak_value, equity_value)
+            drawdown = min(drawdown, (equity_value - peak_value) / peak_value)
+        return sharpe_value, hits, sum(values) / len(values), drawdown
+
+    event_indices = [index for index, value in enumerate(event_active_values[: len(net_returns)]) if value > 0]
+    non_event_indices = [index for index in range(len(net_returns)) if index >= len(event_active_values) or event_active_values[index] <= 0]
+    event_sharpe, event_hit_rate, average_event_return, event_max_drawdown = _subset_stats(event_indices)
+    non_event_sharpe, non_event_hit_rate, average_non_event_return, non_event_max_drawdown = _subset_stats(non_event_indices)
+    executed_turnover = sum(abs(value) for value in positions)
+    turnover_change = executed_turnover - raw_turnover_before_event_rules
+
     return BacktestReport(
         pnl=pnl,
         gross_pnl=gross_pnl,
@@ -550,4 +648,16 @@ def run_backtest(
         avg_modeled_cost_bps=(
             float(sum(modeled_cost_bps_values) / len(modeled_cost_bps_values)) if modeled_cost_bps_values else 0.0
         ),
+        event_mode=event_mode_value,
+        event_sharpe=float(event_sharpe),
+        non_event_sharpe=float(non_event_sharpe),
+        event_hit_rate=float(event_hit_rate),
+        non_event_hit_rate=float(non_event_hit_rate),
+        average_event_return=float(average_event_return),
+        average_non_event_return=float(average_non_event_return),
+        trades_blocked_by_event_rules=int(trades_blocked_by_event_rules),
+        trades_added_by_event_rules=int(trades_added_by_event_rules),
+        turnover_change=float(turnover_change),
+        event_max_drawdown=float(event_max_drawdown),
+        non_event_max_drawdown=float(non_event_max_drawdown),
     )

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from src.events.registry import EVENT_ID_COLUMNS, EVENT_TARGET_COLUMNS
 
 RESERVED_COLUMNS = {
     "timestamp",
@@ -31,7 +32,10 @@ RESERVED_COLUMNS = {
     "event_direction_label",
     "event_signed_label",
     "event_magnitude",
+    *EVENT_TARGET_COLUMNS,
 }
+
+PASSTHROUGH_FEATURE_COLUMNS = set(EVENT_ID_COLUMNS)
 
 
 @dataclass(slots=True)
@@ -68,7 +72,8 @@ def fit_feature_normalizer(
     if not rows:
         raise ValueError("Cannot fit normalizer on empty rows")
 
-    columns = feature_columns if feature_columns is not None else infer_feature_columns(rows)
+    raw_columns = feature_columns if feature_columns is not None else infer_feature_columns(rows)
+    columns = [column for column in raw_columns if column not in PASSTHROUGH_FEATURE_COLUMNS]
     if not columns:
         raise ValueError("No numeric feature columns found for normalization")
 

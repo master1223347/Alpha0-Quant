@@ -1,0 +1,11 @@
+{
+  "old_config_name": "vol_confidence_panel_transformer",
+  "old_events_enabled": false,
+  "old_model_type": "panel_transformer",
+  "old_model_include_event_heads": false,
+  "backtest_ignore_matches_legacy": {
+    "pnl": true,
+    "trade_count": true,
+    "hit_rate": true
+  }
+}

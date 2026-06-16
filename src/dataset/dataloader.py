@@ -77,6 +77,29 @@ class ArtifactTensorDataset:
             _pick_value(artifacts, ("event_magnitude", "event_sample_weight", "event_strength")),
             dtype=torch.float32,
         )
+        self.event_opportunity_label = self._to_tensor(
+            _pick_value(artifacts, ("event_opportunity_label", "event_opportunity_target")),
+            dtype=torch.float32,
+        )
+        self.event_drift_label = self._to_tensor(
+            _pick_value(artifacts, ("event_drift_label", "post_event_drift_label_h1")),
+            dtype=torch.long,
+        )
+        self.event_reversal_label = self._to_tensor(
+            _pick_value(artifacts, ("event_reversal_label",)),
+            dtype=torch.float32,
+        )
+        self.event_absorption_label = self._to_tensor(
+            _pick_value(artifacts, ("event_absorption_label",)),
+            dtype=torch.float32,
+        )
+        raw_event_context = _pick_value(artifacts, ("event_context",))
+        self.event_context = {}
+        if isinstance(raw_event_context, dict):
+            self.event_context = {
+                key: self._to_tensor(value, dtype=torch.float32)
+                for key, value in raw_event_context.items()
+            }
         self.timestamps = _pick_value(artifacts, ("timestamps",))
         self.tickers = _pick_value(artifacts, ("tickers",))
         self.feature_columns = _pick_value(artifacts, ("feature_columns",))
@@ -131,6 +154,17 @@ class ArtifactTensorDataset:
             sample["event_signed_label"] = self.event_signed_label[index]
         if self.event_magnitude is not None:
             sample["event_magnitude"] = self.event_magnitude[index]
+        if self.event_opportunity_label is not None:
+            sample["event_opportunity_label"] = self.event_opportunity_label[index]
+        if self.event_drift_label is not None:
+            sample["event_drift_label"] = self.event_drift_label[index]
+        if self.event_reversal_label is not None:
+            sample["event_reversal_label"] = self.event_reversal_label[index]
+        if self.event_absorption_label is not None:
+            sample["event_absorption_label"] = self.event_absorption_label[index]
+        for key, values in self.event_context.items():
+            if values is not None:
+                sample[key] = values[index]
         if self.timestamps is not None:
             sample["timestamp"] = _normalize_timestamp(self.timestamps[index])
         if self.tickers is not None:
