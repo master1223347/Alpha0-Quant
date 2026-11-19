@@ -9,3 +9,4 @@ extend-exclude = [".venv"]
 
 [tool.ruff.lint]
 select = ["F", "E9", "B"]
+ignore = ["B905"]  # zip(strict=) would change behavior on length mismatches
