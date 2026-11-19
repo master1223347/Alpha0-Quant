@@ -128,7 +128,8 @@ def _resolve_primary_target_key(config: ExperimentConfig) -> str:
 def _resolve_event_drift_key(config: ExperimentConfig) -> str:
     horizon = int(getattr(config.targets, "event_drift_horizon", 1))
     horizons = tuple(int(value) for value in getattr(config.targets, "post_event_horizons", (1, 3, 6, 12)))
-    if horizon not in horizons:
+    drift_supervised = float(getattr(config.training, "event_drift_loss_weight", 0.0)) > 0.0
+    if drift_supervised and horizon not in horizons:
         raise ValueError(f"targets.event_drift_horizon={horizon} must be one of post_event_horizons {horizons}")
     return f"post_event_drift_label_h{horizon}"
 

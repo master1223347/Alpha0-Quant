@@ -43,5 +43,11 @@ def test_resolve_event_drift_key():
     config.targets.event_drift_horizon = 6
     assert _resolve_event_drift_key(config) == "post_event_drift_label_h6"
     config.targets.event_drift_horizon = 5
+    _resolve_event_drift_key(config)  # drift loss disabled: no validation
+    config.training.event_drift_loss_weight = 0.2
+    with pytest.raises(ValueError):
+        _resolve_event_drift_key(config)
+    config.targets.event_drift_horizon = 1
+    config.targets.post_event_horizons = (3, 6)
     with pytest.raises(ValueError):
         _resolve_event_drift_key(config)
