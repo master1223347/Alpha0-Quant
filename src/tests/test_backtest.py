@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from src.evaluation.backtest import run_backtest
+from src.evaluation.backtest import fit_selection_cutoffs, run_backtest
 
 
 def _interleaved_panel():
@@ -99,3 +99,46 @@ def test_drawdown_and_sharpe_are_finite():
     assert math.isfinite(report.sharpe)
     assert report.max_drawdown <= 0.0
     assert len(report.equity_curve) == 7
+
+
+def test_fit_selection_cutoffs_global_abs():
+    cutoffs = fit_selection_cutoffs(probabilities=[0.9, 0.2, 0.55, 0.5], top_percentile=0.5)
+    assert cutoffs == {"top_cutoff": pytest.approx(0.6)}
+
+
+def test_fit_selection_cutoffs_separate_long_short():
+    cutoffs = fit_selection_cutoffs(
+        probabilities=[0.9, 0.8, 0.2, 0.1, 0.5], selection_mode="separate_long_short", long_short_percentile=0.2
+    )
+    assert cutoffs == {"long_cutoff": pytest.approx(0.8), "short_cutoff": pytest.approx(-0.8)}
+
+
+def test_selection_cutoffs_do_not_depend_on_future_scores():
+    probabilities = [0.7, 0.99, 0.99, 0.99]
+    kwargs = dict(
+        probabilities=probabilities,
+        close=[100.0] * 4,
+        next_close=[101.0] * 4,
+        confidence_threshold=0.0,
+        top_percentile=0.25,
+        execution_lag_bars=0,
+    )
+    in_sample = run_backtest(**kwargs)
+    causal = run_backtest(**kwargs, selection_cutoffs={"top_cutoff": 0.3})
+    assert in_sample.long_count == 1
+    assert causal.long_count == 4
+    assert causal.selection_cutoffs == {"top_cutoff": 0.3}
+    prefix = run_backtest(**{**kwargs, "probabilities": [0.7], "close": [100.0], "next_close": [101.0]},
+                          selection_cutoffs={"top_cutoff": 0.3})
+    assert prefix.long_count == 1
+
+
+def test_action_scores_restandardized_with_reference_stats():
+    from types import SimpleNamespace
+
+    from src.pipeline.evaluate_model import _standardize_action_scores_with_reference
+
+    reference = SimpleNamespace(raw_action_scores=[-1.0, 1.0])
+    evaluated = SimpleNamespace(raw_action_scores=[3.0, 5.0], action_scores=[-1.0, 1.0])
+    assert _standardize_action_scores_with_reference(evaluated, reference)
+    assert evaluated.action_scores == [3.0, 5.0]

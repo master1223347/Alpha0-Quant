@@ -32,6 +32,7 @@ class BacktestReport:
     selection_mode: str | None = None
     long_short_percentile: float | None = None
     selected_bars: int = 0
+    selection_cutoffs: dict[str, float] | None = None
     equity_curve: list[float] | None = None
     regime_adaptation_enabled: bool = False
     regime_counts: dict[str, int] | None = None
@@ -144,6 +145,125 @@ def _build_market_proxy_series(
     return ordered_timestamps, proxy_close, normalized_per_sample
 
 
+def _selection_scores(
+    up_probabilities: list[float],
+    down_probabilities: list[float],
+    *,
+    signal_scores: list[float] | None,
+    signal_source: str,
+    mu_values: list[float] | None,
+    sigma_values: list[float] | None,
+    confidence_mu_agreement_weight: float,
+    signal_mu_sigma_floor: float,
+) -> tuple[list[float] | None, list[float], int]:
+    """Return (blended_scores, finite selection scores, non-finite score count)."""
+    blended_scores = signal_scores
+    source = str(signal_source).strip().lower()
+    if blended_scores is None and source != "classification_prob":
+        mu = [float(value) for value in (mu_values or [0.0 for _ in up_probabilities])]
+        if len(mu) != len(up_probabilities):
+            mu = [0.0 for _ in up_probabilities]
+        if sigma_values is None:
+            sigma = [1.0 for _ in up_probabilities]
+        else:
+            sigma = [max(float(signal_mu_sigma_floor), float(value)) for value in sigma_values]
+            if len(sigma) != len(up_probabilities):
+                sigma = [1.0 for _ in up_probabilities]
+        directional_confidence = [
+            float(up - down) for up, down in zip(up_probabilities, down_probabilities)
+        ]
+        if source == "mu":
+            blended_scores = list(mu)
+        elif source == "mu_over_sigma":
+            blended_scores = [float(m) / float(s) for m, s in zip(mu, sigma)]
+        elif source == "confidence_plus_mu":
+            weight = float(confidence_mu_agreement_weight)
+            blended_scores = [
+                (weight * directional_confidence[index]) + ((1.0 - weight) * mu[index])
+                for index in range(len(up_probabilities))
+            ]
+        else:
+            blended_scores = directional_confidence
+    if blended_scores is not None and len(blended_scores) != len(up_probabilities):
+        blended_scores = None
+
+    if blended_scores is None:
+        scores_for_selection = [float(up - down) for up, down in zip(up_probabilities, down_probabilities)]
+    else:
+        scores_for_selection = [float(value) for value in blended_scores]
+
+    score_nan_count = 0
+    sanitized_scores: list[float] = []
+    for value in scores_for_selection:
+        if math.isfinite(value):
+            sanitized_scores.append(float(value))
+        else:
+            score_nan_count += 1
+            sanitized_scores.append(0.0)
+    scores_for_selection = sanitized_scores
+    return blended_scores, scores_for_selection, score_nan_count
+
+
+def _selection_keep_count(sample_count: int, fraction: float) -> int:
+    return max(1, int(sample_count * float(fraction)))
+
+
+def fit_selection_cutoffs(
+    *,
+    probabilities: list[float] | None = None,
+    up_probabilities: list[float] | None = None,
+    down_probabilities: list[float] | None = None,
+    top_percentile: float | None = None,
+    selection_mode: str | None = None,
+    long_short_percentile: float | None = None,
+    signal_scores: list[float] | None = None,
+    signal_source: str = "classification_prob",
+    mu_values: list[float] | None = None,
+    sigma_values: list[float] | None = None,
+    confidence_mu_agreement_weight: float = 0.50,
+    signal_mu_sigma_floor: float = 0.05,
+) -> dict[str, float] | None:
+    """Fit percentile selection cutoffs on reference (e.g. validation) predictions.
+
+    Passing the result to ``run_backtest(selection_cutoffs=...)`` selects bars by fixed score thresholds instead of
+    ranking the backtest sample itself, which would use future scores to pick each trade.
+    """
+    if up_probabilities is None or down_probabilities is None:
+        resolved = probabilities or []
+        up_probabilities = [float(value) for value in resolved]
+        down_probabilities = [1.0 - float(value) for value in resolved]
+    else:
+        up_probabilities = [float(value) for value in up_probabilities]
+        down_probabilities = [float(value) for value in down_probabilities]
+    if not up_probabilities or len(up_probabilities) != len(down_probabilities):
+        return None
+    _, scores, _ = _selection_scores(
+        up_probabilities,
+        down_probabilities,
+        signal_scores=signal_scores,
+        signal_source=signal_source,
+        mu_values=mu_values,
+        sigma_values=sigma_values,
+        confidence_mu_agreement_weight=confidence_mu_agreement_weight,
+        signal_mu_sigma_floor=signal_mu_sigma_floor,
+    )
+    selection = str(selection_mode or "global_abs").strip().lower()
+    if selection == "separate_long_short" and long_short_percentile is not None:
+        keep_count = _selection_keep_count(len(scores), long_short_percentile)
+        return {
+            "long_cutoff": sorted(scores, reverse=True)[keep_count - 1],
+            "short_cutoff": sorted(scores)[keep_count - 1],
+        }
+    if top_percentile is not None:
+        keep_count = _selection_keep_count(len(scores), top_percentile)
+        if selection == "global_abs":
+            metric = [abs(value) for value in scores]
+        else:
+            metric = [max(up, down) for up, down in zip(up_probabilities, down_probabilities)]
+        return {"top_cutoff": sorted(metric, reverse=True)[keep_count - 1]}
+    return None
+
+
 def run_backtest(
     probabilities: list[float] | None,
     close: list[float],
@@ -205,6 +325,7 @@ def run_backtest(
     block_liquidity_events: bool = True,
     allow_post_event_drift_trades: bool = True,
     event_adaptive_thresholds: bool = True,
+    selection_cutoffs: dict[str, float] | None = None,
 ) -> BacktestReport:
     """Run a threshold-based long/short strategy."""
     if probabilities is None and (up_probabilities is None or down_probabilities is None):
@@ -246,56 +367,33 @@ def run_backtest(
     def _event_type_name(type_id: int) -> str:
         names = {1: "macro", 2: "earnings", 3: "sec_filing", 4: "news", 5: "geopolitical", 6: "liquidity"}
         return names.get(int(type_id), "")
-    blended_scores = signal_scores
-    source = str(signal_source).strip().lower()
-    if blended_scores is None and source != "classification_prob":
-        mu = [float(value) for value in (mu_values or [0.0 for _ in up_probabilities])]
-        if len(mu) != len(up_probabilities):
-            mu = [0.0 for _ in up_probabilities]
-        if sigma_values is None:
-            sigma = [1.0 for _ in up_probabilities]
-        else:
-            sigma = [max(float(signal_mu_sigma_floor), float(value)) for value in sigma_values]
-            if len(sigma) != len(up_probabilities):
-                sigma = [1.0 for _ in up_probabilities]
-        directional_confidence = [
-            float(up - down) for up, down in zip(up_probabilities, down_probabilities)
-        ]
-        if source == "mu":
-            blended_scores = list(mu)
-        elif source == "mu_over_sigma":
-            blended_scores = [float(m) / float(s) for m, s in zip(mu, sigma)]
-        elif source == "confidence_plus_mu":
-            weight = float(confidence_mu_agreement_weight)
-            blended_scores = [
-                (weight * directional_confidence[index]) + ((1.0 - weight) * mu[index])
-                for index in range(len(up_probabilities))
-            ]
-        else:
-            blended_scores = directional_confidence
-    if blended_scores is not None and len(blended_scores) != len(up_probabilities):
-        blended_scores = None
-
-    if blended_scores is None:
-        scores_for_selection = [float(up - down) for up, down in zip(up_probabilities, down_probabilities)]
-    else:
-        scores_for_selection = [float(value) for value in blended_scores]
-
-    score_nan_count = 0
-    sanitized_scores: list[float] = []
-    for value in scores_for_selection:
-        if math.isfinite(value):
-            sanitized_scores.append(float(value))
-        else:
-            score_nan_count += 1
-            sanitized_scores.append(0.0)
-    scores_for_selection = sanitized_scores
+    blended_scores, scores_for_selection, score_nan_count = _selection_scores(
+        up_probabilities,
+        down_probabilities,
+        signal_scores=signal_scores,
+        signal_source=signal_source,
+        mu_values=mu_values,
+        sigma_values=sigma_values,
+        confidence_mu_agreement_weight=confidence_mu_agreement_weight,
+        signal_mu_sigma_floor=signal_mu_sigma_floor,
+    )
 
     selection = str(selection_mode or "global_abs").strip().lower()
     long_indices: set[int] = set()
     short_indices: set[int] = set()
     selected_indices = set(range(len(up_probabilities)))
-    if selection == "separate_long_short" and long_short_percentile is not None:
+    cutoffs = selection_cutoffs or {}
+    if selection == "separate_long_short" and long_short_percentile is not None and "long_cutoff" in cutoffs:
+        long_indices = {index for index, value in enumerate(scores_for_selection) if value >= cutoffs["long_cutoff"]}
+        short_indices = {index for index, value in enumerate(scores_for_selection) if value <= cutoffs["short_cutoff"]}
+        selected_indices = long_indices | short_indices
+    elif top_percentile is not None and "top_cutoff" in cutoffs:
+        if selection == "global_abs":
+            metric = [abs(value) for value in scores_for_selection]
+        else:
+            metric = confidence_scores
+        selected_indices = {index for index, value in enumerate(metric) if value >= cutoffs["top_cutoff"]}
+    elif selection == "separate_long_short" and long_short_percentile is not None:
         keep_count = max(1, int(len(up_probabilities) * float(long_short_percentile)))
         ranked_long = sorted(range(len(up_probabilities)), key=lambda index: scores_for_selection[index], reverse=True)
         ranked_short = sorted(range(len(up_probabilities)), key=lambda index: scores_for_selection[index])
@@ -647,6 +745,7 @@ def run_backtest(
         selection_mode=selection,
         long_short_percentile=float(long_short_percentile) if long_short_percentile is not None else None,
         selected_bars=len(selected_indices),
+        selection_cutoffs=dict(selection_cutoffs) if selection_cutoffs else None,
         equity_curve=equity_curve,
         regime_adaptation_enabled=regime_enabled,
         regime_counts=regime_counts,

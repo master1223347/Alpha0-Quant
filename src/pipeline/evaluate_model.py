@@ -12,7 +12,7 @@ from typing import Any
 from src.config.default_config import ExperimentConfig, get_default_config
 from src.dataset.dataloader import create_dataloaders
 from src.evaluation.analysis import EvaluationReport, build_evaluation_report, save_evaluation_report
-from src.evaluation.backtest import run_backtest
+from src.evaluation.backtest import fit_selection_cutoffs, run_backtest
 from src.evaluation.calibration import fit_temperature_scaling
 from src.evaluation.metrics import compute_classification_metrics
 from src.evaluation.uncertainty import estimate_mc_dropout_uncertainty
@@ -108,6 +108,52 @@ def _precision_at_k(*, labels: list[int], scores: list[float], top_fraction: flo
     return positives / len(selected) if selected else float("nan")
 
 
+def _standardize_action_scores_with_reference(validation: Any, reference: Any) -> bool:
+    """Re-standardize evaluated-split action scores with reference-split statistics.
+
+    ``validate_epoch`` z-scores ``action_scores`` per split, so test scores would otherwise use test-period mean/std.
+    """
+    reference_raw = getattr(reference, "raw_action_scores", None)
+    evaluated_raw = getattr(validation, "raw_action_scores", None)
+    if not reference_raw or not evaluated_raw or len(evaluated_raw) != len(validation.action_scores):
+        return False
+    mean_score = sum(reference_raw) / len(reference_raw)
+    std_score = math.sqrt(sum((value - mean_score) ** 2 for value in reference_raw) / len(reference_raw))
+    if std_score <= 1e-8:
+        return False
+    validation.action_scores = [(float(value) - mean_score) / std_score for value in evaluated_raw]
+    return True
+
+
+def _fit_reference_cutoffs(
+    config: ExperimentConfig,
+    reference: Any,
+    *,
+    top_percentile: float | None,
+    selection_mode: str,
+    long_short_percentile: float | None,
+    signal_scores: list[float] | None,
+    signal_source: str,
+) -> dict[str, float] | None:
+    """Fit percentile cutoffs on validation predictions so test-time selection never ranks future bars."""
+    if reference is None or (top_percentile is None and long_short_percentile is None):
+        return None
+    return fit_selection_cutoffs(
+        probabilities=reference.probabilities,
+        up_probabilities=reference.up_probabilities,
+        down_probabilities=reference.down_probabilities,
+        top_percentile=float(top_percentile) if top_percentile is not None else None,
+        selection_mode=selection_mode,
+        long_short_percentile=float(long_short_percentile) if long_short_percentile is not None else None,
+        signal_scores=signal_scores,
+        signal_source=signal_source,
+        mu_values=reference.mean_returns,
+        sigma_values=reference.sigma_values,
+        confidence_mu_agreement_weight=float(getattr(config.backtest, "confidence_mu_agreement_weight", 0.50)),
+        signal_mu_sigma_floor=float(getattr(config.backtest, "signal_mu_sigma_floor", 0.05)),
+    )
+
+
 def _build_confidence_bucket_summary(
     *,
     validation: Any,
@@ -121,6 +167,7 @@ def _build_confidence_bucket_summary(
     regime_fit_kwargs: dict[str, Any] | None = None,
     execution_model_kwargs: dict[str, Any] | None = None,
     event_backtest_kwargs: dict[str, Any] | None = None,
+    reference: Any = None,
 ) -> dict[str, Any]:
     from src.evaluation.metrics import compute_classification_metrics
 
@@ -131,8 +178,27 @@ def _build_confidence_bucket_summary(
     if sample_count == 0:
         return {"top_percentile": float(top_percentile), "error": "empty validation samples"}
 
+    cutoffs = None
+    if reference is not None:
+        cutoffs = fit_selection_cutoffs(
+            probabilities=reference.probabilities,
+            up_probabilities=reference.up_probabilities,
+            down_probabilities=reference.down_probabilities,
+            top_percentile=float(top_percentile),
+            selection_mode="global_abs",
+            signal_scores=getattr(reference, "action_scores", None),
+        )
     keep_count = max(1, int(sample_count * float(top_percentile)))
-    if getattr(validation, "action_scores", None):
+    if cutoffs:
+        if getattr(validation, "action_scores", None) and len(validation.action_scores) == sample_count:
+            score_values = [float(value) for value in validation.action_scores]
+        else:
+            score_values = [
+                float(up) - float(down) for up, down in zip(validation.up_probabilities, validation.down_probabilities)
+            ]
+        ranked_indices = [index for index in range(sample_count) if abs(score_values[index]) >= cutoffs["top_cutoff"]]
+        keep_count = len(ranked_indices)
+    elif getattr(validation, "action_scores", None):
         score_values = [float(value) for value in validation.action_scores]
         ranked_indices = sorted(range(sample_count), key=lambda index: abs(score_values[index]), reverse=True)
     else:
@@ -191,6 +257,7 @@ def _build_confidence_bucket_summary(
         slippage_bps=slippage_bps,
         signal_scores=getattr(validation, "action_scores", None),
         sigma_values=getattr(validation, "sigma_values", None),
+        selection_cutoffs=cutoffs,
         **(regime_fit_kwargs or {}),
         **(regime_backtest_kwargs or {}),
         **(execution_model_kwargs or {}),
@@ -207,7 +274,7 @@ def _build_confidence_bucket_summary(
         "directional_accuracy": directional_accuracy,
         "directional_precision": directional_precision,
         "mean_action_score": float(sum(float(validation.action_scores[index]) for index in selected_indices) / len(selected_indices))
-        if getattr(validation, "action_scores", None)
+        if getattr(validation, "action_scores", None) and selected_indices
         else float("nan"),
         "average_realized_return": float(average_realized_return),
         "hit_rate": float(backtest.hit_rate),
@@ -414,6 +481,7 @@ def _walk_forward_summary(
     regime_fit_kwargs: dict[str, Any],
     regime_backtest_kwargs: dict[str, Any],
     execution_model_kwargs: dict[str, Any],
+    selection_cutoffs: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     timestamps = getattr(validation, "timestamps", None) or []
     parsed_timestamps = [_coerce_datetime(value) for value in timestamps]
@@ -490,6 +558,7 @@ def _walk_forward_summary(
             slippage_bps=float(slippage_bps),
             signal_source=str(getattr(config.backtest, "signal_source", "classification_prob")),
             signal_scores=action_scores,
+            selection_cutoffs=selection_cutoffs,
             mu_values=mu_values,
             sigma_values=sigma_values,
             require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),
@@ -637,6 +706,11 @@ def run_evaluation_pipeline(
     slippage_bps = float(getattr(config.backtest, "slippage_bps", 0.0)) if include_costs else 0.0
 
     validation = validate_epoch(model, test_loader, loss_fn, device=device)
+    reference_loader = dataloaders.get("val")
+    reference = None
+    if reference_loader is not None and reference_loader is not test_loader and len(reference_loader.dataset) > 0:
+        reference = validate_epoch(model, reference_loader, loss_fn, device=device)
+        _standardize_action_scores_with_reference(validation, reference)
     regime_backtest_kwargs = _build_regime_backtest_kwargs(config)
     regime_fit_kwargs = _extract_regime_fit_kwargs(fit_loader)
     execution_model_kwargs = _build_execution_model_kwargs(config)
@@ -648,6 +722,31 @@ def run_evaluation_pipeline(
         signal_scores = getattr(validation, "action_scores", None)
     else:
         signal_scores = None
+    signal_source = str(getattr(config.backtest, "signal_source", "classification_prob"))
+    configured_top_percentile = getattr(config.backtest, "top_percentile", None)
+    primary_cutoffs = _fit_reference_cutoffs(
+        config,
+        reference,
+        top_percentile=configured_top_percentile,
+        selection_mode=selection_mode,
+        long_short_percentile=long_short_percentile,
+        signal_scores=getattr(reference, "action_scores", None) if score_source == "expected_utility" else None,
+        signal_source=signal_source,
+    )
+    walk_forward_cutoffs = _fit_reference_cutoffs(
+        config,
+        reference,
+        top_percentile=configured_top_percentile,
+        selection_mode=selection_mode,
+        long_short_percentile=long_short_percentile,
+        signal_scores=getattr(reference, "action_scores", None),
+        signal_source=signal_source,
+    )
+    percentile_selection = configured_top_percentile is not None or (
+        selection_mode == "separate_long_short" and long_short_percentile is not None
+    )
+    if percentile_selection and primary_cutoffs is None:
+        LOGGER.warning("No validation predictions; percentile selection ranks the evaluated split in-sample")
     backtest = run_backtest(
         probabilities=validation.probabilities,
         up_probabilities=validation.up_probabilities,
@@ -670,6 +769,7 @@ def run_evaluation_pipeline(
         signal_source=str(getattr(config.backtest, "signal_source", "classification_prob")),
         signal_scores=signal_scores,
         mu_values=validation.mean_returns,
+        selection_cutoffs=primary_cutoffs,
         sigma_values=validation.sigma_values,
         require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),
         confidence_mu_agreement_weight=float(getattr(config.backtest, "confidence_mu_agreement_weight", 0.50)),
@@ -686,6 +786,11 @@ def run_evaluation_pipeline(
         metrics=validation.metrics,
         backtest=backtest,
     )
+    if percentile_selection:
+        report.metrics["selection_cutoffs"] = {
+            "source": "val" if primary_cutoffs is not None else "evaluated_split_in_sample",
+            "cutoffs": primary_cutoffs,
+        }
     if validation.event_metrics is not None:
         report.metrics["event_head"] = validation.event_metrics.to_dict()
     if validation.event_direction_metrics is not None:
@@ -743,6 +848,7 @@ def run_evaluation_pipeline(
             regime_fit_kwargs=regime_fit_kwargs,
             execution_model_kwargs=execution_model_kwargs,
             event_backtest_kwargs=event_backtest_kwargs,
+            reference=reference,
         )
         for top_percentile in confidence_bucket_sweep
     ]
@@ -815,6 +921,7 @@ def run_evaluation_pipeline(
             slippage_bps=slippage_bps,
             signal_source=str(getattr(config.backtest, "signal_source", "classification_prob")),
             signal_scores=sweep_signal_scores,
+            selection_cutoffs=primary_cutoffs,
             mu_values=validation.mean_returns,
             sigma_values=validation.sigma_values,
             require_directional_agreement=bool(getattr(config.backtest, "require_directional_agreement", False)),
@@ -913,6 +1020,7 @@ def run_evaluation_pipeline(
             regime_fit_kwargs=regime_fit_kwargs,
             regime_backtest_kwargs=regime_backtest_kwargs,
             execution_model_kwargs=execution_model_kwargs,
+            selection_cutoffs=walk_forward_cutoffs,
         )
 
     report_path = Path(config.training.metrics_path).with_name("evaluation_report.json")
