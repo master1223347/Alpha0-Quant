@@ -173,6 +173,7 @@ In code:
 - `global_time` splits drop rows in the last `dataset.purge_bars` timestamps before each split boundary so forward-looking labels never use next-split prices (default: longest label lookahead; `0` disables)
 - no forward bars used in rolling feature windows
 - explicit execution-lag handling in backtest, applied per ticker
+- `backtest.top_percentile` / `long_short_percentile` cutoffs are fit on validation predictions and applied as fixed thresholds on test (no ranking over future bars)
 - dataset coverage guards before training:
   - `data.min_required_rows`
   - `data.min_required_train_rows`
