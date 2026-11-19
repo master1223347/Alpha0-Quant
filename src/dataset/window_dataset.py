@@ -99,6 +99,7 @@ def build_labeled_windows(
     event_direction_key: str = "event_direction_label",
     event_signed_key: str = "event_signed_label",
     event_magnitude_key: str = "event_magnitude",
+    event_drift_key: str = "post_event_drift_label_h1",
 ) -> WindowDatasetArtifacts:
     """Build sliding windows and next-candle binary labels from feature sequences."""
     if window_size <= 0:
@@ -171,7 +172,7 @@ def build_labeled_windows(
                 event_signed_values.append(float(target_row.get(event_signed_key, 1.0)))
                 event_magnitude_values.append(float(target_row.get(event_magnitude_key, 0.0)))
                 event_opportunity_values.append(float(target_row.get("event_opportunity_label", 0.0)))
-                event_drift_values.append(float(target_row.get("post_event_drift_label_h1", 1.0)))
+                event_drift_values.append(float(target_row.get(event_drift_key, 1.0)))
                 event_reversal_values.append(float(target_row.get("event_reversal_label", 0.0)))
                 event_absorption_values.append(float(target_row.get("event_absorption_label", 0.0)))
                 for column in EVENT_CONTEXT_COLUMNS:

@@ -125,6 +125,15 @@ def _resolve_primary_target_key(config: ExperimentConfig) -> str:
     return primary
 
 
+def _resolve_event_drift_key(config: ExperimentConfig) -> str:
+    horizon = int(getattr(config.targets, "event_drift_horizon", 1))
+    horizons = tuple(int(value) for value in getattr(config.targets, "post_event_horizons", (1, 3, 6, 12)))
+    drift_supervised = float(getattr(config.training, "event_drift_loss_weight", 0.0)) > 0.0
+    if drift_supervised and horizon not in horizons:
+        raise ValueError(f"targets.event_drift_horizon={horizon} must be one of post_event_horizons {horizons}")
+    return f"post_event_drift_label_h{horizon}"
+
+
 def _resolve_panel_context_size(config: ExperimentConfig) -> int:
     context_size = config.dataset.panel_context_size
     if context_size is None:
@@ -373,6 +382,7 @@ def assemble_split_datasets(
     return_target_key = _resolve_return_target_key(config)
     direction_target_key = _resolve_direction_target_key(config)
     threshold_target_key = _resolve_threshold_target_key(config)
+    event_drift_key = _resolve_event_drift_key(config)
     primary_target_key = _resolve_primary_target_key(config)
     datasets: dict[str, WindowDatasetArtifacts | PanelDatasetArtifacts] = {}
     split_row_counts: dict[str, int] = {}
@@ -389,6 +399,7 @@ def assemble_split_datasets(
                 return_key=return_target_key,
                 direction_key=direction_target_key,
                 threshold_key=threshold_target_key,
+                event_drift_key=event_drift_key,
             )
         else:
             datasets[split_name] = build_labeled_windows(
@@ -400,6 +411,7 @@ def assemble_split_datasets(
                 return_key=return_target_key,
                 direction_key=direction_target_key,
                 threshold_key=threshold_target_key,
+                event_drift_key=event_drift_key,
             )
     return datasets, split_row_counts, resolved_window_size
 
@@ -486,6 +498,7 @@ def build_dataset(
     return_target_key = _resolve_return_target_key(config)
     direction_target_key = _resolve_direction_target_key(config)
     threshold_target_key = _resolve_threshold_target_key(config)
+    event_drift_key = _resolve_event_drift_key(config)
     primary_target_key = _resolve_primary_target_key(config)
     datasets: dict[str, WindowDatasetArtifacts | PanelDatasetArtifacts] = {}
     split_row_counts: dict[str, int] = {}
@@ -500,6 +513,7 @@ def build_dataset(
                 return_key=return_target_key,
                 direction_key=direction_target_key,
                 threshold_key=threshold_target_key,
+                event_drift_key=event_drift_key,
             )
         else:
             datasets[split_name] = build_labeled_windows(
@@ -511,6 +525,7 @@ def build_dataset(
                 return_key=return_target_key,
                 direction_key=direction_target_key,
                 threshold_key=threshold_target_key,
+                event_drift_key=event_drift_key,
             )
 
     all_rows = []
