@@ -55,7 +55,7 @@ Backward compatibility, feature/target separation, as-of leakage, synthetic samp
 
 ## Remaining known risks
 - Provider connectors beyond local CSV remain graceful stubs, so live API correctness is not audited here.
-- Drift supervision uses one horizon at a time (`targets.event_drift_horizon`, default `h1`); the other drift horizons are labeled but not supervised simultaneously.
+- Drift supervision uses one horizon at a time (`targets.event_drift_horizon`, default `h1`). Event-window drift labels whose horizon runs past the sequence end are `-100` and skipped by the drift loss.
 
 ## Any fixes made
 - Restricted scheduled future events to pre-window timing/context use instead of generic attachment.

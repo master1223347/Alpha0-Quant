@@ -64,3 +64,20 @@ def test_cross_sectional_rank_per_timestamp():
     assert ticker_sequences["CCC"][0][0]["cross_sectional_rank"] == 0.5
     assert ticker_sequences["AAA"][0][0]["cross_sectional_rank"] == 1.0
     assert ticker_sequences["CCC"][0][1]["cross_sectional_rank"] == 0.5
+
+
+def test_unobserved_event_drift_is_marked_ignored():
+    from src.targets.labeling import DRIFT_LABEL_UNOBSERVED
+
+    rows = _sequence([100.0, 101.0, 102.0, 103.0, 104.0])
+    for row in rows:
+        row["is_event_window"] = 1.0
+    labeled = label_sequence(rows, horizon=1, post_event_horizons=(1, 3))
+    assert [row["post_event_drift_label_h3"] == DRIFT_LABEL_UNOBSERVED for row in labeled] == [
+        False,
+        False,
+        True,
+        True,
+    ]
+    assert all(row["post_event_drift_label_h1"] != DRIFT_LABEL_UNOBSERVED for row in labeled)
+

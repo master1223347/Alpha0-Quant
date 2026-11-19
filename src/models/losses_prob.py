@@ -557,9 +557,11 @@ if nn is not None:
             if event_drift_logits is None and self.event_drift_weight > 0:
                 raise ValueError("event_drift_loss_weight > 0 but outputs are missing event_drift_logits")
             if event_drift_logits is not None and event_drift_target is not None:
-                drift_loss = self.ce(event_drift_logits, event_drift_target)
-                total = total + self.event_drift_weight * drift_loss
-                components["event_drift_loss"] = float(drift_loss.detach().cpu().item())
+                observed = event_drift_target >= 0
+                if bool(observed.any()):
+                    drift_loss = self.ce(event_drift_logits[observed], event_drift_target[observed])
+                    total = total + self.event_drift_weight * drift_loss
+                    components["event_drift_loss"] = float(drift_loss.detach().cpu().item())
 
             event_reversal_logit = extract_event_reversal_logit(outputs)
             event_reversal_target = extract_event_reversal_target(batch, device=device)
