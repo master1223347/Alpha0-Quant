@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from src.events.align_events import align_events_to_feature_rows

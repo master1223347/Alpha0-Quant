@@ -1,8 +1,0 @@
-{
-  "events_total": 14,
-  "events_missing_asof_timestamp": 0,
-  "events_with_event_time_after_bar_but_included": 0,
-  "scheduled_events_with_actual_values_before_release": 0,
-  "event_rows_dropped": 0,
-  "low_confidence_estimated_timestamps": 0
-}

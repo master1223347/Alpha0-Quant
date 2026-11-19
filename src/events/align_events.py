@@ -128,7 +128,6 @@ def align_events_to_feature_rows(
         ticker_specific = [event for event in pre_known_events if event.event_scope == "ticker"]
         known_events = list(pre_known_events)
         pre_events = list(future_scheduled_events)
-        visible_events = known_events + pre_events
         nearest_next = min(((event.event_time_utc - ts).total_seconds() / 60.0 for event in pre_events if event.event_time_utc >= ts), default=1e6)
         nearest_last = min(((ts - event.event_time_utc).total_seconds() / 60.0 for event in known_events if event.event_time_utc <= ts), default=1e6)
         row["minutes_to_next_event"] = float(nearest_next)
