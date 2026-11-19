@@ -75,3 +75,15 @@ def test_purge_covers_sequences_ending_before_boundary():
 def test_negative_purge_raises():
     with pytest.raises(ValueError):
         split_ticker_sequences(_ticker_sequences(), split_mode="global_time", purge_bars=-1)
+
+
+def test_purge_skips_boundaries_without_later_split():
+    data = _ticker_sequences(num_tickers=1, length=20)
+    timestamps = _timestamps(
+        split_ticker_sequences(
+            data, split_mode="global_time", train_ratio=0.8, val_ratio=0.2, test_ratio=0.0, purge_bars=2
+        )
+    )
+    assert timestamps["train"] == set(range(14))
+    assert timestamps["val"] == set(range(16, 20))
+    assert timestamps["test"] == set()

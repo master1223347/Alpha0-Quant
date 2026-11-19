@@ -112,14 +112,18 @@ def _build_global_timestamp_split_map(
     train_target = int(total_timestamps * train_ratio)
     val_target = int(total_timestamps * (train_ratio + val_ratio))
 
+    # Only purge before a boundary that has later timestamps.
+    train_purge = purge_bars if train_target < total_timestamps else 0
+    val_purge = purge_bars if val_target < total_timestamps else 0
+
     timestamp_to_split: dict[Any, str] = {}
     for index, timestamp in enumerate(timestamps):
         if index < train_target:
-            if index >= train_target - purge_bars:
+            if index >= train_target - train_purge:
                 continue
             split_name = "train"
         elif index < val_target:
-            if index >= val_target - purge_bars:
+            if index >= val_target - val_purge:
                 continue
             split_name = "val"
         else:
