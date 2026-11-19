@@ -132,7 +132,7 @@ def build_panel_dataset(
         raise ValueError("No feature columns available for panel dataset construction")
 
     rows_by_timestamp: dict[Any, list[dict[str, Any]]] = defaultdict(list)
-    for ticker, sequences in sorted(ticker_feature_sequences.items()):
+    for _ticker, sequences in sorted(ticker_feature_sequences.items()):
         for sequence in sequences:
             for row in sequence:
                 timestamp = row.get("timestamp")

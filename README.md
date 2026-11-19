@@ -6,9 +6,9 @@ The current system is optimized for:
 - directional quality on volatility-filtered moves
 - tradable performance on confidence-filtered signals after costs
 
-## What Changed
+## Overview
 
-The codebase now centers around a volatility-aware, confidence-filtered workflow:
+The pipeline centers on a volatility-aware, confidence-filtered workflow:
 - primary target defaults to `vol_direction_label` (3-class: down/neutral/up)
 - regression target defaults to `vol_target_clipped` (vol-normalized return)
 - training defaults prioritize threshold classification (`0.8`) over regression (`0.2`)
@@ -199,8 +199,15 @@ Ladder includes:
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+.venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-dev.txt
+```
+
+Run tests, lint, and the end-to-end smoke test (uses a synthetic fixture, no raw data needed):
+
+```bash
+.venv/bin/python -m pytest
+.venv/bin/ruff check .
+.venv/bin/python scripts/smoke_test_event_pipeline.py
 ```
 
 Run the current volatility+confidence experiment:
@@ -218,7 +225,7 @@ Other configs available in `experiments/` include:
 
 ## Main Artifacts
 
-Generated outputs:
+Generated outputs (gitignored; rebuild them by running a pipeline):
 - `data/processed/features.parquet`
 - `data/processed/dataset.parquet`
 - `data/processed/labels.parquet`

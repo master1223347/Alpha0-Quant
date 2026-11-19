@@ -89,7 +89,7 @@ if nn is not None:
 
             blocks: list[nn.Module] = []
             in_channels = num_features
-            for index, channels in enumerate(hidden_dims):
+            for channels in hidden_dims:
                 blocks.append(nn.Conv1d(in_channels, channels, kernel_size=1))
                 blocks.append(nn.GELU())
                 blocks.append(nn.Dropout(dropout) if dropout > 0 else nn.Identity())

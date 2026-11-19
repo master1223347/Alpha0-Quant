@@ -19,13 +19,13 @@ from audit_event_feature_matrix import run_feature_matrix_audit
 from src.dataset.sampler import split_ticker_sequences
 from src.evaluation.backtest import run_backtest
 from src.events.align_events import align_events_to_feature_rows
-from src.events.registry import EVENT_CONTEXT_COLUMNS, EVENT_FEATURE_COLUMNS, EVENT_ID_COLUMNS, EVENT_TARGET_COLUMNS
+from src.events.registry import EVENT_ID_COLUMNS, EVENT_TARGET_COLUMNS
 from src.events.schema import EventRecord, read_records
 from src.features.normalize import fit_feature_normalizer
 from src.models.losses_prob import build_model_loss
 from src.pipeline.build_dataset import build_dataset, normalize_split_sequences
 from src.pipeline.build_features import build_feature_store
-from src.pipeline.run_experiment import load_experiment_config, run_experiment
+from src.pipeline.run_experiment import load_experiment_config
 from src.pipeline.train_model import build_model
 from src.targets.labeling import TARGET_COLUMNS, label_ticker_sequences
 

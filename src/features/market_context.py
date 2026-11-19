@@ -463,7 +463,7 @@ def compute_gap_regime_features(
             by_date[date][col_name] = z
 
     # Ensure every date present has the full column set (zero-fill missing).
-    for date, feats in by_date.items():
+    for feats in by_date.values():
         for c in cols:
             feats.setdefault(c, 0.0)
 

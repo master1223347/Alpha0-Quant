@@ -24,7 +24,6 @@ from typing import Any
 
 from src.config.default_config import ExperimentConfig, get_default_config
 from src.dataset.dataloader import create_dataloaders
-from src.dataset.sampler import split_ticker_sequences
 from src.pipeline.build_dataset import (
     assemble_split_datasets,
     normalize_split_sequences,
@@ -258,7 +257,7 @@ def _run_single_fold(
         return None
 
     split_sequences = {"train": train_seqs, "val": val_seqs, "test": test_seqs}
-    for split_name, ticker_map in split_sequences.items():
+    for ticker_map in split_sequences.values():
         if ticker_map:
             assign_cross_sectional_rank(ticker_map, target_column="next_log_return")
 

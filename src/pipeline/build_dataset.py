@@ -440,7 +440,7 @@ def build_dataset(
         test_ratio=config.dataset.test_ratio,
         split_mode=split_mode,
     )
-    for split_name, ticker_map in split_sequences.items():
+    for ticker_map in split_sequences.values():
         if ticker_map:
             assign_cross_sectional_rank(ticker_map, target_column="next_log_return")
     overlap_counts = _validate_split_integrity(

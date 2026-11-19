@@ -32,8 +32,8 @@ def _write_json(path: str | Path, payload: Any) -> Path:
 
 
 def build_event_store(rows: list[dict[str, Any]], config: Any) -> tuple[list[EventRecord], dict[str, Any]]:
-    events_cfg = getattr(config, "events")
-    sources_cfg = getattr(config, "event_sources")
+    events_cfg = config.events
+    sources_cfg = config.event_sources
     cache_dir = str(getattr(events_cfg, "cache_dir", "data/events/cache"))
     tickers = sorted({str(row.get("ticker", "")).upper() for row in rows if row.get("ticker")})
     all_events: list[EventRecord] = []
@@ -48,11 +48,11 @@ def build_event_store(rows: list[dict[str, Any]], config: Any) -> tuple[list[Eve
         reports.append(report)
 
     for events, report in (
-        ingest_news_events(getattr(sources_cfg, "news"), local_path=getattr(events_cfg, "manual_news_path", None)),
-        ingest_earnings_events(getattr(sources_cfg, "earnings"), local_path=getattr(events_cfg, "manual_earnings_path", None)),
-        ingest_fred_events(getattr(sources_cfg, "fred"), cache_dir=cache_dir),
-        ingest_sec_events(getattr(sources_cfg, "sec"), tickers=tickers, cache_dir=cache_dir),
-        ingest_gdelt_events(getattr(sources_cfg, "gdelt"), cache_dir=cache_dir),
+        ingest_news_events(sources_cfg.news, local_path=getattr(events_cfg, "manual_news_path", None)),
+        ingest_earnings_events(sources_cfg.earnings, local_path=getattr(events_cfg, "manual_earnings_path", None)),
+        ingest_fred_events(sources_cfg.fred, cache_dir=cache_dir),
+        ingest_sec_events(sources_cfg.sec, tickers=tickers, cache_dir=cache_dir),
+        ingest_gdelt_events(sources_cfg.gdelt, cache_dir=cache_dir),
     ):
         all_events.extend(events)
         reports.append(report)
