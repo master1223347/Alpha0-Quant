@@ -170,7 +170,7 @@ In code:
 - split overlap and ordering checks in `build_dataset._validate_split_integrity`
 - cross-sectional feature contamination prevention (global-time enforcement)
 - normalization fit on train split only
-- `global_time` splits purge the last `dataset.purge_bars` bars before each split boundary so forward-looking labels never use next-split prices (default: longest label lookahead; `0` disables)
+- `global_time` splits drop rows in the last `dataset.purge_bars` timestamps before each split boundary so forward-looking labels never use next-split prices (default: longest label lookahead; `0` disables)
 - no forward bars used in rolling feature windows
 - explicit execution-lag handling in backtest, applied per ticker
 - dataset coverage guards before training:

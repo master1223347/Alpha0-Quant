@@ -37,8 +37,8 @@ def split_ticker_sequences(
 ) -> SplitMap:
     """Split ticker sequences either per ticker or by global timestamp.
 
-    With ``global_time``, ``purge_bars`` rows are dropped from the end of any chunk that is followed by a later
-    split in the same sequence, so forward-looking labels never use prices from the next split.
+    With ``global_time``, rows in the last ``purge_bars`` timestamps before the val and test starts are dropped,
+    so forward-looking labels never use prices from the next split (including bars trimmed by labeling).
     """
     if purge_bars < 0:
         raise ValueError("purge_bars must be >= 0")
@@ -82,14 +82,15 @@ def split_ticker_sequences(
                 splits["test"][ticker] = test_sequences
         return splits
 
-    timestamp_to_split = _build_global_timestamp_split_map(ticker_sequences, train_ratio, val_ratio)
-    return _split_by_timestamp(ticker_sequences, timestamp_to_split, purge_bars=purge_bars)
+    timestamp_to_split = _build_global_timestamp_split_map(ticker_sequences, train_ratio, val_ratio, purge_bars)
+    return _split_by_timestamp(ticker_sequences, timestamp_to_split)
 
 
 def _build_global_timestamp_split_map(
     ticker_sequences: dict[str, list[list[dict[str, Any]]]],
     train_ratio: float,
     val_ratio: float,
+    purge_bars: int = 0,
 ) -> dict[Any, str]:
     timestamps: list[Any] = []
     seen: set[Any] = set()
@@ -114,8 +115,12 @@ def _build_global_timestamp_split_map(
     timestamp_to_split: dict[Any, str] = {}
     for index, timestamp in enumerate(timestamps):
         if index < train_target:
+            if index >= train_target - purge_bars:
+                continue
             split_name = "train"
         elif index < val_target:
+            if index >= val_target - purge_bars:
+                continue
             split_name = "val"
         else:
             split_name = "test"
@@ -127,8 +132,6 @@ def _build_global_timestamp_split_map(
 def _split_by_timestamp(
     ticker_sequences: dict[str, list[list[dict[str, Any]]]],
     timestamp_to_split: dict[Any, str],
-    *,
-    purge_bars: int = 0,
 ) -> SplitMap:
     splits: SplitMap = {"train": {}, "val": {}, "test": {}}
 
@@ -151,9 +154,8 @@ def _split_by_timestamp(
                 if current_split is None:
                     current_split = split_name
                 if split_name != current_split:
-                    purged_sequence = current_split_sequence[: len(current_split_sequence) - purge_bars]
-                    if purged_sequence:
-                        split_sequences[current_split].append(purged_sequence)
+                    if current_split_sequence:
+                        split_sequences[current_split].append(current_split_sequence)
                     current_split = split_name
                     current_split_sequence = []
 

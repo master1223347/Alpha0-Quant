@@ -63,11 +63,12 @@ def test_global_time_purge_drops_bars_before_each_boundary():
         assert next_start - last > 2
 
 
-def test_purge_does_not_affect_separate_sequences():
-    # Labels never cross sequence boundaries, so a sequence ending before a boundary keeps all its rows.
+def test_purge_covers_sequences_ending_before_boundary():
+    # Labeling trims a sequence's tail bars, so a labeled sequence ending just before the boundary
+    # can still have targets priced in the next split.
     data = {"T0": [[{"timestamp": s} for s in range(14)], [{"timestamp": s} for s in range(14, 20)]]}
     timestamps = _timestamps(split_ticker_sequences(data, split_mode="global_time", purge_bars=2))
-    assert timestamps["train"] == set(range(14))
+    assert timestamps["train"] == set(range(12))
     assert timestamps["val"] == {14}
 
 
