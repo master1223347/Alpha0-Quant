@@ -128,6 +128,10 @@ def compute_event_meta_labels(
     }
 
 
+# Event-window drift label whose horizon runs past the sequence end; ignored by the drift loss.
+DRIFT_LABEL_UNOBSERVED = -100
+
+
 def label_sequence(
     sequence: list[dict[str, Any]],
     *,
@@ -239,6 +243,8 @@ def label_sequence(
                 future_close = float(sequence[index + horizon_value]["close"])
                 cumulative = math.log(future_close / current_close) if current_close > 0 and future_close > 0 else 0.0
                 drift_labels[key] = 2 if cumulative > adjusted_threshold else 0 if cumulative < -adjusted_threshold else 1
+            elif is_event_window:
+                drift_labels[key] = DRIFT_LABEL_UNOBSERVED
             else:
                 drift_labels[key] = 1
         for fixed_horizon in (1, 3, 6, 12):
