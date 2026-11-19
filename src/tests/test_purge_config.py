@@ -1,3 +1,5 @@
+import pytest
+
 from src.config.default_config import get_default_config
 from src.pipeline.build_dataset import _resolve_purge_bars
 
@@ -17,3 +19,10 @@ def test_explicit_purge_overrides_default():
     assert _resolve_purge_bars(config, label_horizon=12) == 0
     config.dataset.purge_bars = 3
     assert _resolve_purge_bars(config, label_horizon=12) == 3
+
+
+def test_negative_purge_config_raises():
+    config = get_default_config()
+    config.dataset.purge_bars = -1
+    with pytest.raises(ValueError):
+        _resolve_purge_bars(config, label_horizon=1)

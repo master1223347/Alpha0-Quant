@@ -95,7 +95,9 @@ def _resolve_purge_bars(config: ExperimentConfig, label_horizon: int) -> int:
     """Bars to drop before each global_time split boundary; defaults to the longest label lookahead."""
     configured = getattr(config.dataset, "purge_bars", None)
     if configured is not None:
-        return max(0, int(configured))
+        if int(configured) < 0:
+            raise ValueError(f"dataset.purge_bars must be >= 0, got {configured}")
+        return int(configured)
     targets = config.targets
     lookaheads = [
         int(label_horizon),
