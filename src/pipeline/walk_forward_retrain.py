@@ -422,6 +422,9 @@ def run_walk_forward_retrain(
         regression_clip=float(getattr(config.targets, "regression_clip", 3.0)),
         event_k=event_k,
         event_vol_window=event_vol_window,
+        post_event_horizons=tuple(getattr(config.targets, "post_event_horizons", (1, 3, 6, 12))),
+        event_reversal_horizon=int(getattr(config.targets, "event_reversal_horizon", 6)),
+        event_absorption_horizon=int(getattr(config.targets, "event_absorption_horizon", 6)),
     )
 
     unique_dates = _unique_session_dates(labeled_sequences)
