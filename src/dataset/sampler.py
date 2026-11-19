@@ -33,8 +33,15 @@ def split_ticker_sequences(
     val_ratio: float = 0.15,
     test_ratio: float = 0.15,
     split_mode: str = "per_ticker",
+    purge_bars: int = 0,
 ) -> SplitMap:
-    """Split ticker sequences either per ticker or by global timestamp."""
+    """Split ticker sequences either per ticker or by global timestamp.
+
+    With ``global_time``, rows in the last ``purge_bars`` timestamps before the val and test starts are dropped,
+    so forward-looking labels never use prices from the next split (including bars trimmed by labeling).
+    """
+    if purge_bars < 0:
+        raise ValueError("purge_bars must be >= 0")
     ratio_sum = train_ratio + val_ratio + test_ratio
     if abs(ratio_sum - 1.0) > 1e-8:
         raise ValueError(f"split ratios must sum to 1.0, got {ratio_sum}")
@@ -75,7 +82,7 @@ def split_ticker_sequences(
                 splits["test"][ticker] = test_sequences
         return splits
 
-    timestamp_to_split = _build_global_timestamp_split_map(ticker_sequences, train_ratio, val_ratio)
+    timestamp_to_split = _build_global_timestamp_split_map(ticker_sequences, train_ratio, val_ratio, purge_bars)
     return _split_by_timestamp(ticker_sequences, timestamp_to_split)
 
 
@@ -83,6 +90,7 @@ def _build_global_timestamp_split_map(
     ticker_sequences: dict[str, list[list[dict[str, Any]]]],
     train_ratio: float,
     val_ratio: float,
+    purge_bars: int = 0,
 ) -> dict[Any, str]:
     timestamps: list[Any] = []
     seen: set[Any] = set()
@@ -104,11 +112,19 @@ def _build_global_timestamp_split_map(
     train_target = int(total_timestamps * train_ratio)
     val_target = int(total_timestamps * (train_ratio + val_ratio))
 
+    # Only purge before a boundary that has later timestamps.
+    train_purge = purge_bars if train_target < total_timestamps else 0
+    val_purge = purge_bars if val_target < total_timestamps else 0
+
     timestamp_to_split: dict[Any, str] = {}
     for index, timestamp in enumerate(timestamps):
         if index < train_target:
+            if index >= train_target - train_purge:
+                continue
             split_name = "train"
         elif index < val_target:
+            if index >= val_target - val_purge:
+                continue
             split_name = "val"
         else:
             split_name = "test"
