@@ -53,6 +53,7 @@ class TargetConfig:
     use_event_targets: bool = False
     event_vol_multiplier: float = 1.25
     post_event_horizons: tuple[int, ...] = (1, 3, 6, 12)
+    event_drift_horizon: int = 1  # which post_event_drift_label_h* supervises the drift head
     event_reversal_horizon: int = 6
     event_absorption_horizon: int = 6
 
