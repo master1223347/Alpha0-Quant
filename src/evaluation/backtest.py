@@ -401,7 +401,6 @@ def run_backtest(
     raw_turnover_before_event_rules = 0.0
     trades_blocked_by_event_rules = 0
     trades_added_by_event_rules = 0
-    previous_position = 0
     cost_fraction = (float(cost_bps_per_trade) + float(slippage_bps)) / 10000.0
     transaction_cost_pnl = 0.0
     slippage_pnl = 0.0
@@ -484,13 +483,26 @@ def run_backtest(
         position = -raw_position if flip_positions else raw_position
         signal_positions.append(position)
 
+    # Lag and turnover are applied within each ticker's stream; samples of a ticker are assumed chronological.
+    if tickers is not None and len(tickers) == len(signal_positions):
+        stream_keys = [str(ticker) for ticker in tickers]
+    else:
+        stream_keys = ["" for _ in signal_positions]
+    stream_indices: dict[str, list[int]] = {}
+    for index, key in enumerate(stream_keys):
+        stream_indices.setdefault(key, []).append(index)
+
     executed_positions = [0] * len(signal_positions)
-    for index, position in enumerate(signal_positions):
-        execution_index = index + lag_bars
-        if execution_index < len(executed_positions):
-            executed_positions[execution_index] = position
+    previous_in_stream = [-1] * len(signal_positions)
+    for indices in stream_indices.values():
+        for offset, index in enumerate(indices):
+            if offset >= lag_bars:
+                executed_positions[index] = signal_positions[indices[offset - lag_bars]]
+            if offset > 0:
+                previous_in_stream[index] = indices[offset - 1]
 
     for index, (requested_position, current_close, future_close) in enumerate(zip(executed_positions, close, next_close)):
+        previous_position = positions[previous_in_stream[index]] if previous_in_stream[index] >= 0 else 0.0
         position = float(requested_position)
         requested_turnover = abs(position - float(previous_position))
         modeled_cost_bps: float | None = None
@@ -561,7 +573,6 @@ def run_backtest(
         positions.append(position)
         gross_returns.append(gross_strategy_return)
         net_returns.append(net_strategy_return)
-        previous_position = position
 
     gross_pnl = sum(gross_returns)
     pnl = sum(net_returns)
