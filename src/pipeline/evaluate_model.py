@@ -108,6 +108,23 @@ def _precision_at_k(*, labels: list[int], scores: list[float], top_fraction: flo
     return positives / len(selected) if selected else float("nan")
 
 
+def _standardize_action_scores_with_reference(validation: Any, reference: Any) -> bool:
+    """Re-standardize evaluated-split action scores with reference-split statistics.
+
+    ``validate_epoch`` z-scores ``action_scores`` per split, so test scores would otherwise use test-period mean/std.
+    """
+    reference_raw = getattr(reference, "raw_action_scores", None)
+    evaluated_raw = getattr(validation, "raw_action_scores", None)
+    if not reference_raw or not evaluated_raw or len(evaluated_raw) != len(validation.action_scores):
+        return False
+    mean_score = sum(reference_raw) / len(reference_raw)
+    std_score = math.sqrt(sum((value - mean_score) ** 2 for value in reference_raw) / len(reference_raw))
+    if std_score <= 1e-8:
+        return False
+    validation.action_scores = [(float(value) - mean_score) / std_score for value in evaluated_raw]
+    return True
+
+
 def _fit_reference_cutoffs(
     config: ExperimentConfig,
     reference: Any,
@@ -693,6 +710,7 @@ def run_evaluation_pipeline(
     reference = None
     if reference_loader is not None and reference_loader is not test_loader and len(reference_loader.dataset) > 0:
         reference = validate_epoch(model, reference_loader, loss_fn, device=device)
+        _standardize_action_scores_with_reference(validation, reference)
     regime_backtest_kwargs = _build_regime_backtest_kwargs(config)
     regime_fit_kwargs = _extract_regime_fit_kwargs(fit_loader)
     execution_model_kwargs = _build_execution_model_kwargs(config)

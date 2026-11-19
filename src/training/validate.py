@@ -60,6 +60,7 @@ class ValidationResult:
     event_metrics: ClassificationMetrics | None = None
     event_direction_metrics: ClassificationMetrics | None = None
     event_context: dict[str, list[float]] | None = None
+    raw_action_scores: list[float] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         output = asdict(self)
@@ -374,4 +375,5 @@ def validate_epoch(model: Any, dataloader: Any, loss_fn: Any, *, device: Any) ->
         event_metrics=event_metrics,
         event_direction_metrics=event_direction_metrics,
         event_context={key: values for key, values in event_context.items() if values},
+        raw_action_scores=list(raw_scores) or None,
     )

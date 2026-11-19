@@ -131,3 +131,14 @@ def test_selection_cutoffs_do_not_depend_on_future_scores():
     prefix = run_backtest(**{**kwargs, "probabilities": [0.7], "close": [100.0], "next_close": [101.0]},
                           selection_cutoffs={"top_cutoff": 0.3})
     assert prefix.long_count == 1
+
+
+def test_action_scores_restandardized_with_reference_stats():
+    from types import SimpleNamespace
+
+    from src.pipeline.evaluate_model import _standardize_action_scores_with_reference
+
+    reference = SimpleNamespace(raw_action_scores=[-1.0, 1.0])
+    evaluated = SimpleNamespace(raw_action_scores=[3.0, 5.0], action_scores=[-1.0, 1.0])
+    assert _standardize_action_scores_with_reference(evaluated, reference)
+    assert evaluated.action_scores == [3.0, 5.0]
