@@ -48,3 +48,29 @@ def test_limit_tickers_is_deterministic():
     assert len(first) == 4
     assert first.keys() == second.keys()
     assert limit_tickers(data, max_tickers=None) is data
+
+
+def test_global_time_purge_drops_bars_before_each_boundary():
+    data = _ticker_sequences(num_tickers=2, length=20)
+    splits = split_ticker_sequences(data, split_mode="global_time", purge_bars=2)
+    timestamps = _timestamps(splits)
+    assert timestamps["train"] == set(range(12))
+    assert timestamps["val"] == {14}
+    assert timestamps["test"] == {17, 18, 19}
+    for split in ("train", "val"):
+        last = max(timestamps[split])
+        next_start = min(timestamps["val" if split == "train" else "test"])
+        assert next_start - last > 2
+
+
+def test_purge_does_not_affect_separate_sequences():
+    # Labels never cross sequence boundaries, so a sequence ending before a boundary keeps all its rows.
+    data = {"T0": [[{"timestamp": s} for s in range(14)], [{"timestamp": s} for s in range(14, 20)]]}
+    timestamps = _timestamps(split_ticker_sequences(data, split_mode="global_time", purge_bars=2))
+    assert timestamps["train"] == set(range(14))
+    assert timestamps["val"] == {14}
+
+
+def test_negative_purge_raises():
+    with pytest.raises(ValueError):
+        split_ticker_sequences(_ticker_sequences(), split_mode="global_time", purge_bars=-1)

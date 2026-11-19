@@ -33,8 +33,15 @@ def split_ticker_sequences(
     val_ratio: float = 0.15,
     test_ratio: float = 0.15,
     split_mode: str = "per_ticker",
+    purge_bars: int = 0,
 ) -> SplitMap:
-    """Split ticker sequences either per ticker or by global timestamp."""
+    """Split ticker sequences either per ticker or by global timestamp.
+
+    With ``global_time``, ``purge_bars`` rows are dropped from the end of any chunk that is followed by a later
+    split in the same sequence, so forward-looking labels never use prices from the next split.
+    """
+    if purge_bars < 0:
+        raise ValueError("purge_bars must be >= 0")
     ratio_sum = train_ratio + val_ratio + test_ratio
     if abs(ratio_sum - 1.0) > 1e-8:
         raise ValueError(f"split ratios must sum to 1.0, got {ratio_sum}")
@@ -76,7 +83,7 @@ def split_ticker_sequences(
         return splits
 
     timestamp_to_split = _build_global_timestamp_split_map(ticker_sequences, train_ratio, val_ratio)
-    return _split_by_timestamp(ticker_sequences, timestamp_to_split)
+    return _split_by_timestamp(ticker_sequences, timestamp_to_split, purge_bars=purge_bars)
 
 
 def _build_global_timestamp_split_map(
@@ -120,6 +127,8 @@ def _build_global_timestamp_split_map(
 def _split_by_timestamp(
     ticker_sequences: dict[str, list[list[dict[str, Any]]]],
     timestamp_to_split: dict[Any, str],
+    *,
+    purge_bars: int = 0,
 ) -> SplitMap:
     splits: SplitMap = {"train": {}, "val": {}, "test": {}}
 
@@ -142,8 +151,9 @@ def _split_by_timestamp(
                 if current_split is None:
                     current_split = split_name
                 if split_name != current_split:
-                    if current_split_sequence:
-                        split_sequences[current_split].append(current_split_sequence)
+                    purged_sequence = current_split_sequence[: len(current_split_sequence) - purge_bars]
+                    if purged_sequence:
+                        split_sequences[current_split].append(purged_sequence)
                     current_split = split_name
                     current_split_sequence = []
 

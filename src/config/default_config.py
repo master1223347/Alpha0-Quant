@@ -242,6 +242,7 @@ class DatasetConfig:
     stride: int = 1
     label_horizon: int = 1
     split_mode: str = "global_time"
+    purge_bars: int | None = None  # None = max label lookahead; 0 disables
     dataset_type: str = "auto"
     panel_context_size: int | None = None
     train_ratio: float = 0.70

@@ -91,6 +91,21 @@ def _resolve_label_horizon(config: ExperimentConfig) -> int:
     return int(config.targets.horizon if config.targets.horizon is not None else config.dataset.label_horizon)
 
 
+def _resolve_purge_bars(config: ExperimentConfig, label_horizon: int) -> int:
+    """Bars to drop before each global_time split boundary; defaults to the longest label lookahead."""
+    configured = getattr(config.dataset, "purge_bars", None)
+    if configured is not None:
+        return max(0, int(configured))
+    targets = config.targets
+    lookaheads = [
+        int(label_horizon),
+        *(int(value) for value in getattr(targets, "post_event_horizons", (1, 3, 6, 12))),
+        int(getattr(targets, "event_reversal_horizon", 6)),
+        int(getattr(targets, "event_absorption_horizon", 6)),
+    ]
+    return max(0, *lookaheads)
+
+
 def _resolve_primary_target_key(config: ExperimentConfig) -> str:
     event_target_cfg = getattr(config, "event_target", None)
     if event_target_cfg is not None and bool(getattr(event_target_cfg, "enabled", False)):
@@ -433,13 +448,17 @@ def build_dataset(
     )
 
     split_mode = config.dataset.split_mode.lower().strip()
+    purge_bars = _resolve_purge_bars(config, target_horizon)
     split_sequences = split_ticker_sequences(
         labeled_sequences,
         train_ratio=config.dataset.train_ratio,
         val_ratio=config.dataset.val_ratio,
         test_ratio=config.dataset.test_ratio,
         split_mode=split_mode,
+        purge_bars=purge_bars,
     )
+    if split_mode == "global_time" and purge_bars:
+        LOGGER.info("Purged %d bars before each split boundary to prevent label leakage", purge_bars)
     for ticker_map in split_sequences.values():
         if ticker_map:
             assign_cross_sectional_rank(ticker_map, target_column="next_log_return")
