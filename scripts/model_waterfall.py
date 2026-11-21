@@ -42,7 +42,8 @@ def graph_neighbor_returns(excess: pd.DataFrame, corr_bars: int, top_k: int = 5)
         corr = np.nan_to_num(np.corrcoef(history.T))
         np.fill_diagonal(corr, 0.0)
         corr[corr < 0] = 0.0
-        cutoff = -np.sort(-corr, axis=1)[:, top_k - 1 : top_k]
+        k = min(top_k, corr.shape[0] - 1)
+        cutoff = -np.sort(-corr, axis=1)[:, k - 1 : k]
         corr[corr < cutoff] = 0.0
         weights = corr / np.maximum(corr.sum(axis=1, keepdims=True), 1e-12)
         for lookback in GRAPH_LOOKBACKS:
