@@ -228,7 +228,8 @@ def main() -> None:
     models = fit_models(train, feature_cols)
     val_s, test_s = score(models, val, feature_cols), score(models, test, feature_cols)
     cost = 4 * args.cost_bps / 1e4
-    ppy = args.bars_per_day * 252
+    stamps = pd.Series(val_s["timestamp"].unique())
+    ppy = len(stamps) / stamps.dt.date.nunique() * 252  # tradable bars per day after same-session target filter
 
     grid = []
     for gq, cq in itertools.product(QUANTILES, QUANTILES):
