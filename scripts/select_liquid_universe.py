@@ -31,10 +31,11 @@ def main() -> None:
     chosen = eligible.nlargest(args.top, "median_dollar_vol")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    for stale in out.glob("*.txt"):
+        if stale.is_symlink():
+            stale.unlink()
     for path in chosen["path"]:
-        link = out / path.name
-        if not link.exists():
-            link.symlink_to(path.resolve())
+        (out / path.name).symlink_to(path.resolve())
     print(f"{len(table)} files, {len(eligible)} eligible, linked {len(chosen)} into {out}")
 
 
