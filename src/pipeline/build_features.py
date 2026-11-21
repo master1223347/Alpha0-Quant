@@ -64,6 +64,8 @@ def _merge_feature_rows(rows: list[OhlcvRow], config: ExperimentConfig) -> list[
             rows,
             window=int(getattr(config.features, "realized_vol_window", 20)),
         )
+        if not realized_vol:
+            return []
     else:
         realized_vol = []
 
