@@ -80,7 +80,7 @@ def load_panel(raw_dir: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         stamps = pd.to_datetime(
             frame["<DATE>"].astype(str) + frame["<TIME>"].astype(str).str.zfill(6), format="%Y%m%d%H%M%S"
         )
-        ticker = str(frame["<TICKER>"].iloc[0])
+        ticker = str(frame["<TICKER>"].iloc[0]).removesuffix(".US")
         closes[ticker] = pd.Series(frame["<CLOSE>"].to_numpy(), index=stamps)
         volumes[ticker] = pd.Series(frame["<VOL>"].to_numpy(dtype=float), index=stamps)
     close = pd.DataFrame(closes).sort_index().ffill(limit=2)
