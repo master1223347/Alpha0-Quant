@@ -25,6 +25,8 @@ def main() -> None:
         dollar = frame["<CLOSE>"] * frame["<VOL>"]
         stats.append((path, len(frame), float(dollar.median()), float(frame["<CLOSE>"].median())))
     table = pd.DataFrame(stats, columns=["path", "bars", "median_dollar_vol", "median_price"])
+    table["name"] = table["path"].map(lambda path: path.name)
+    table = table.sort_values("median_dollar_vol", ascending=False).drop_duplicates("name")
     eligible = table[(table["bars"] >= args.min_coverage * table["bars"].max()) & (table["median_price"] >= 5)]
     chosen = eligible.nlargest(args.top, "median_dollar_vol")
     out = Path(args.out)
