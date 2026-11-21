@@ -18,7 +18,8 @@ for f in glob.glob(sys.argv[1]+"/*.txt"):
 px=pd.DataFrame(fr).sort_index().ffill(limit=2)
 ret=np.log(px).diff()
 day=px.index.date
-ret[pd.Series(day,index=px.index).ne(pd.Series(day,index=px.index).shift())]=np.nan  # drop overnight returns
+session_start=pd.Series(day,index=px.index).ne(pd.Series(day,index=px.index).shift()).values
+ret[session_start]=np.nan  # drop overnight returns
 n=len(px); cut=int(n*0.7); COST=1.5e-4  # per unit turnover (1bp cost + 0.5bp slippage)
 def run(lb,hold,sign):
     sig=sign*ret.rolling(lb).sum()
@@ -26,6 +27,7 @@ def run(lb,hold,sign):
     w=z.div(z.abs().sum(1),axis=0).fillna(0)
     w=w.iloc[::hold].reindex(w.index).ffill()
     w=w.shift(1)  # 1-bar execution lag
+    w[session_start]=0.0  # flat overnight: close at session end, pay turnover to reopen
     pnl=(w*ret.shift(-0)).sum(1)  # w at t (decided t-1) earns ret at t
     to=w.diff().abs().sum(1)
     return pnl-COST*to, pnl
