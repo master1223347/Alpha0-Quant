@@ -18,6 +18,8 @@ def main() -> None:
 
     stats = []
     for path in Path(args.raw).rglob("*.txt"):
+        if path.is_symlink():  # e.g. a previous --out placed under --raw
+            continue
         try:
             frame = pd.read_csv(path, usecols=["<CLOSE>", "<VOL>"])
         except (ValueError, pd.errors.EmptyDataError):
@@ -35,7 +37,7 @@ def main() -> None:
         if stale.is_symlink():
             stale.unlink()
     for path in chosen["path"]:
-        (out / path.name).symlink_to(path.resolve())
+        (out / path.name).symlink_to(path.absolute())
     print(f"{len(table)} files, {len(eligible)} eligible, linked {len(chosen)} into {out}")
 
 
